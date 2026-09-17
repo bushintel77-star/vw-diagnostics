@@ -1,0 +1,473 @@
+import { electronAPI } from "@electron-toolkit/preload";
+export type GetVersionsFn = () => Promise<typeof electronAPI.process.versions>;
+
+export interface ParserResult {
+  /** True when the Python script exited with code 0. */
+  ok: boolean;
+  /** JSON decoded from the script's stdout, or null when not parseable. */
+  result: unknown;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  durationMs: number;
+}
+
+export type RunParserFn = (input: string, args?: string[]) => Promise<ParserResult>;
+
+/** Shape produced by resources/parser.py. */
+export interface WordCount {
+  word: string;
+  count: number;
+}
+
+export interface LengthBucket {
+  label: string;
+  count: number;
+}
+
+export interface ParserData {
+  lineCount: number;
+  paragraphCount: number;
+  sentenceCount: number;
+  wordCount: number;
+  uniqueWordCount: number;
+  charCount: number;
+  charCountNoSpaces: number;
+  avgWordLength: number;
+  avgWordsPerSentence: number;
+  readingTimeSeconds: number;
+  longestWord: string;
+  topWords: WordCount[];
+  wordLengthBuckets: LengthBucket[];
+  parsedAt: string;
+}
+
+export const isParserData = (value: unknown): value is ParserData =>
+  typeof value === "object" &&
+  value !== null &&
+  "wordCount" in value &&
+  "topWords" in value &&
+  "wordLengthBuckets" in value;
+
+// --- J2534 diagnostic monitor (resources/j2534_monitor.py) ---
+
+export type DiagnosticMode = "live" | "simulate";
+
+export type DiagnosticPhase =
+  | "starting"
+  | "connecting"
+  | "connected"
+  | "simulated"
+  | "disconnected"
+  | "error";
+
+export interface DiagnosticStatusEvent {
+  type: "status";
+  phase: DiagnosticPhase;
+  message: string;
+  mode: DiagnosticMode;
+}
+
+export interface EcuInfo {
+  protocol: string;
+  requestId: string;
+  responseId: string;
+  ecuName: string;
+  partNumber: string;
+  swVersion: string;
+  hwVersion: string;
+  coding: string;
+  vin: string;
+}
+
+export interface DtcFreezeFrame {
+  rpm: number;
+  coolantTempC: number;
+  engineLoadPct: number;
+  speedKph: number;
+}
+
+export interface DtcCode {
+  code: string;
+  status: "Stored" | "Pending" | "Active";
+  description: string;
+  mileageKm: number;
+  /** Conditions captured by the ECU when the fault set. */
+  freezeFrame?: DtcFreezeFrame;
+}
+
+export interface LiveValues {
+  rpm: number;
+  speedKph: number;
+  coolantTempC: number;
+  intakeTempC: number;
+  boostPressureKpa: number;
+  pedalPct: number;
+  engineLoadPct: number;
+  batteryV: number;
+  railPressureBar: number;
+}
+
+export interface DiagnosticInfoEvent {
+  type: "info";
+  info: EcuInfo;
+}
+
+export interface DiagnosticDtcEvent {
+  type: "dtc";
+  codes: DtcCode[];
+}
+
+export interface DiagnosticLiveEvent {
+  type: "live";
+  values: LiveValues;
+  timestamp: string;
+}
+
+export interface DiagnosticErrorEvent {
+  type: "error";
+  message: string;
+}
+
+/** On-device heuristic analysis produced by the monitor. */
+export interface AnalysisFinding {
+  code: string;
+  severity: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  likelyCauses: string[];
+  actions: string[];
+  confidence: number;
+}
+
+export interface DiagnosticAnalysisEvent {
+  type: "analysis";
+  healthScore: number;
+  healthLabel: "Good" | "Fair" | "Poor";
+  summary: string;
+  findings: AnalysisFinding[];
+  advisories: string[];
+  generatedAt: string;
+  /** Tier-1 statistical layer — present once the monitor streams analysis. */
+  stream?: AnalysisStream;
+  provenance?: AnalysisProvenance;
+}
+
+/** Per-channel learned baseline and deviation state. */
+export interface ChannelState {
+  baseline: number;
+  stddev: number;
+  /** Signed deviation of the latest sample, in sigmas. */
+  zScore: number;
+  state: "learning" | "normal" | "elevated" | "abnormal";
+}
+
+export interface StreamPrediction {
+  channel: string;
+  message: string;
+  etaSeconds: number | null;
+  /** Fit quality (R²) × trend stability, 0–1. */
+  confidence: number;
+}
+
+export interface AnalysisStream {
+  samples: number;
+  windowSeconds: number;
+  channels: Partial<Record<keyof LiveValues, ChannelState>>;
+  predictions: StreamPrediction[];
+}
+
+export interface AnalysisProvenance {
+  analysisVersion: number;
+  baselineSamples: number;
+  mode: "static-fallback" | "session-learned" | "cross-session";
+  sessions: number;
+  /** Samples rejected by plausibility/rate checks this session. */
+  rejectedSamples?: number;
+  rejectedChannels?: string[];
+}
+
+export interface DiagnosticLogEvent {
+  type: "log";
+  message: string;
+}
+
+/** One entry of the monitor's component-deletion catalog. */
+export interface ComponentDeletion {
+  id: string;
+  name: string;
+  group: "engine" | "offroad";
+  ecu: string;
+  method: string;
+  /** DTCs the ECU stops reporting once the component is coded out. */
+  clearsCodes: string[];
+  risk: "low" | "medium" | "high";
+  /** Emissions-related deletes are off-road/show use only. */
+  offRoadOnly: boolean;
+  description: string;
+  /** Calibration measures the ECU needs after physical removal. */
+  steps?: string[];
+  /** Deletes usually performed together with this one (catalog ids). */
+  commonlyPairedWith?: string[];
+  /** Conflict/prerequisite warning — e.g. dependencies on other components. */
+  requirement?: string;
+}
+
+export interface DiagnosticDeletionsEvent {
+  type: "deletions";
+  catalog: ComponentDeletion[];
+  /** Catalog ids currently coded out. */
+  active: string[];
+}
+
+/** Write policy enforced by the monitor: default-deny outside `allowed`. */
+export interface ScopedModule {
+  name: string;
+  address?: string;
+  reason: string;
+}
+
+export interface ModuleScope {
+  allowed: ScopedModule[];
+  blocked: ScopedModule[];
+}
+
+/** One entry of the monitor's performance-mods catalog. */
+export interface PerformanceMod {
+  id: string;
+  name: string;
+  group: "engine" | "transmission" | "offroad";
+  ecu: string;
+  method: string;
+  /** What the mod changes, in tuning terms. */
+  parameter: string;
+  risk: "low" | "medium" | "high";
+  offRoadOnly: boolean;
+  requirement?: string;
+  description: string;
+}
+
+export interface DiagnosticModsEvent {
+  type: "mods";
+  catalog: PerformanceMod[];
+  /** Catalog ids currently applied. */
+  active: string[];
+  scope: ModuleScope;
+}
+
+/** One check of the post-work sign-off routine. */
+export interface VerificationItem {
+  check: string;
+  status: "pass" | "fail" | "skipped";
+  detail: string;
+}
+
+/** Manufacturer-standard torque envelope assembled from the factory variant
+ * ladder (550 stock · 580 VW transient · 620 single-turbo Audi · 700 ZF
+ * 8HP70 rating). Verification holds any signed-off tune inside it. */
+export interface FactoryEnvelope {
+  ceilingSustainedNm: number;
+  ceilingPeakNm: number;
+  ladder: string;
+  peakTorqueNm: number | null;
+  sustainedTorqueNm: number | null;
+}
+
+export type DutyProfile = "standard" | "no_tow";
+
+export interface DiagnosticVerificationEvent {
+  type: "verification";
+  passed: boolean;
+  items: VerificationItem[];
+  timestamp: string;
+  /** Where the inputs came from: re-read from the ECU, or the monitor's own
+   * simulated state (say so — never pass simulation off as measured). */
+  source?: "ecu" | "simulated";
+  dutyProfile?: string;
+  envelope?: FactoryEnvelope;
+}
+
+/** One live-channel DID probe result (UDS 0x22 at connect / on demand). */
+export interface DidMapEntry {
+  channel: string;
+  did: string;
+  ok: boolean;
+  value: number | null;
+  note: string;
+}
+
+export interface DiagnosticDidMapEvent {
+  type: "dids";
+  entries: DidMapEntry[];
+}
+
+/** Stock-ECU read/backup progress. Chunks travel monitor→main process only;
+ * the renderer sees progress and, on completion, the written file path. */
+export interface DiagnosticFlashEvent {
+  type: "flash";
+  phase: "start" | "progress" | "complete" | "error";
+  bytes?: number;
+  totalBytes?: number | null;
+  message?: string;
+  chunkB64?: string;
+  /** Present on phase=complete when the main process wrote the backup. */
+  path?: string;
+  sha256?: string;
+}
+
+export type DiagnosticEvent =
+  | DiagnosticStatusEvent
+  | DiagnosticInfoEvent
+  | DiagnosticDidMapEvent
+  | DiagnosticDtcEvent
+  | DiagnosticLiveEvent
+  | DiagnosticAnalysisEvent
+  | DiagnosticLogEvent
+  | DiagnosticDeletionsEvent
+  | DiagnosticModsEvent
+  | DiagnosticBaselinesEvent
+  | DiagnosticPullEvent
+  | DiagnosticVerificationEvent
+  | DiagnosticFlashEvent
+  | DiagnosticErrorEvent;
+
+/** Commands the monitor accepts on stdin (extensible for future UDS ops). */
+export interface ClearDtcCommand {
+  cmd: "clear_dtc";
+}
+
+export interface DeleteComponentCommand {
+  cmd: "delete_component";
+  componentId: string;
+}
+
+export interface RestoreComponentCommand {
+  cmd: "restore_component";
+  componentId: string;
+}
+
+export interface ApplyModCommand {
+  cmd: "apply_mod";
+  modId: string;
+}
+
+export interface RevertModCommand {
+  cmd: "revert_mod";
+  modId: string;
+}
+
+/** Baseline state persisted by the main process, seeded into the monitor. */
+export interface BaselineChannelExport {
+  baseline: number;
+  var: number;
+  samples: number;
+}
+
+export interface VehicleBaseline {
+  sessions: number;
+  channels: Record<string, BaselineChannelExport>;
+}
+
+export type BaselineStateFile = {
+  version: number;
+  vins: Record<string, VehicleBaseline>;
+};
+
+export interface SeedBaselineCommand {
+  cmd: "seed_baseline";
+  vehicles: Record<string, VehicleBaseline>;
+}
+
+export interface RunPullCommand {
+  cmd: "run_pull";
+}
+
+export interface VerifyChangesCommand {
+  cmd: "verify_changes";
+  /** How the vehicle is used — tunes verification scrutiny, never ceilings. */
+  dutyProfile?: DutyProfile;
+}
+
+export interface ProbeDidsCommand {
+  cmd: "probe_dids";
+}
+
+export interface ReadEcuBackupCommand {
+  cmd: "read_ecu_backup";
+}
+
+export type DiagnosticCommand =
+  | ClearDtcCommand
+  | DeleteComponentCommand
+  | RestoreComponentCommand
+  | ApplyModCommand
+  | RevertModCommand
+  | SeedBaselineCommand
+  | RunPullCommand
+  | VerifyChangesCommand
+  | ProbeDidsCommand
+  | ReadEcuBackupCommand;
+
+/** One sample of a dyno pull curve. */
+export interface PullSample {
+  rpm: number;
+  powerKw: number;
+  torqueNm: number;
+  boostKpa: number;
+}
+
+/** Full-throttle sweep result (simulated reference curve until live mode). */
+export interface DiagnosticPullEvent {
+  type: "pull";
+  index: number;
+  /** Tuning state label, e.g. "Stock" or "stage1 + rev_limit". */
+  label: string;
+  modsActive: string[];
+  revLimit: number;
+  samples: PullSample[];
+  peakPowerKw: number;
+  peakPowerRpm: number;
+  peakTorqueNm: number;
+  peakTorqueRpm: number;
+  peakBoostKpa: number;
+  timestamp: string;
+}
+
+/** Emitted by the monitor so the main process can persist learned baselines. */
+export interface DiagnosticBaselinesEvent {
+  type: "baselines";
+  vin: string;
+  sessions: number;
+  channels: Record<string, BaselineChannelExport>;
+}
+
+export interface DiagnosticCommandResult {
+  ok: boolean;
+  message: string;
+}
+
+export type SendDiagnosticCommandFn = (
+  command: DiagnosticCommand
+) => Promise<DiagnosticCommandResult>;
+
+export interface StartDiagnosticOptions {
+  /** Force the simulated transport when no ECU/pass-thru device is connected. */
+  simulate: boolean;
+}
+
+export interface DiagnosticSessionResult {
+  started: boolean;
+  message: string;
+}
+
+export type StartDiagnosticFn = (
+  options: StartDiagnosticOptions
+) => Promise<DiagnosticSessionResult>;
+
+export type StopDiagnosticFn = () => Promise<DiagnosticSessionResult>;
+
+export type DiagnosticEventListener = (event: DiagnosticEvent) => void;
+
+export type OnDiagnosticEventFn = (
+  listener: DiagnosticEventListener
+) => () => void;
