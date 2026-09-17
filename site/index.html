@@ -2,14 +2,12 @@
 <!--
   VW Diagnostics — landing page.
 
-  Self-contained: no build step, no external assets except ./icon.png
-  (plus the Inter webfont, same as the app itself uses).
-  Deploy anywhere static (GitHub Pages, Netlify drop, Cloudflare Pages).
-
-  BEFORE PUBLISHING — one edit:
-  search for bushintel77-star below (download link + source link) and replace
-  it with your GitHub username once you've pushed the repo and uploaded
-  dist/vw-diagnostics-setup.exe to a release.
+  Self-contained: no build step, no external requests of any kind
+  (the only asset is ./icon.png — Inter in the font stack falls back
+  to system fonts when not installed locally).
+  Deployed via the gh-pages branch: publishing = copy site/ files to
+  that branch and push. The download link targets the GitHub Release
+  asset vw-diagnostics-setup.exe (version-stable name, always latest).
 -->
 <html lang="en">
 <head>
@@ -196,6 +194,7 @@
       <a class="btn-secondary" href="#install">Install guide</a>
     </div>
     <p class="cta-note">Windows 10/11 · installer ≈ 80&nbsp;MB · also runs on macOS &amp; Linux from source</p>
+    <p class="cta-note">Live mode today: channels, DTCs, freeze frames. Flash read/write is gated behind ECU security access — the app labels what is real and what is simulated.</p>
   </div>
 </div>
 
@@ -217,8 +216,8 @@
       </div>
       <div class="card">
         <div class="k">Safety net</div>
-        <h3>Stock ECU backup</h3>
-        <p>Full flash read before anything else, saved with a SHA-256 checksum. The rollback path exists before you need it.</p>
+        <h3>Stock ECU backup flow</h3>
+        <p>Chunked flash read with SHA-256 checksum, exercised end-to-end in simulation. On live hardware it refuses — honestly — until ECU security access is unlocked, because a fake backup is worse than none.</p>
       </div>
       <div class="card t">
         <div class="k">Native stats</div>
@@ -228,7 +227,7 @@
       <div class="card">
         <div class="k">Verification</div>
         <h3>Sign-off against the factory ladder</h3>
-        <p>Post-tune pulls are checked against the manufacturer variant ladder — 550 stock → 580 VW transient → 700 Nm gearbox rating — with overboost overlay.</p>
+        <p>Pulls run as clearly-labelled simulated self-checks against the manufacturer variant ladder — 550 stock → 580 VW transient → 700 Nm gearbox rating — with overboost overlay.</p>
       </div>
       <div class="card t">
         <div class="k">Anywhere</div>
@@ -280,7 +279,7 @@
       <div class="step">
         <div>
           <b>Connect hardware when ready</b>
-          <span>A J2534 adapter (e.g. Scanmatik 2) + the app's Python monitor gives you live ECU data. Back up the stock flash first — the app will insist.</span>
+          <span>A J2534 adapter (e.g. Scanmatik 2) + the app's Python monitor gives you live ECU data — channels, DTCs, freeze frames. Flash read/write stays locked until ECU security access is unlocked; the app says so instead of pretending.</span>
         </div>
       </div>
     </div>
