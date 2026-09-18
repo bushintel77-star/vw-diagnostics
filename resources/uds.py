@@ -24,6 +24,19 @@ import sys
 
 REQUEST_ID = 0x7E0
 RESPONSE_ID = 0x7E8
+# TCU (ZF 8HP70): ODIS LL_TransContrModulUDS pair — request 0x7E1,
+# response 0x7E9. One ECU pair per transport instance; the engine pair
+# (LL_EnginContrModul1UDS) stays the default.
+TCU_REQUEST_ID = 0x7E1
+TCU_RESPONSE_ID = 0x7E9
+
+# ISO 14229: while an ECU works on a request it may answer 0x7F <sid>
+# 0x78 (requestCorrectlyReceived-ResponsePending) — a keep-alive, not an
+# error. VAG ECUs do this routinely. The tester keeps waiting on the
+# extended P2* timeout; the pending count is bounded so a stuck ECU
+# can't hang the session forever.
+P2_STAR_TIMEOUT_MS = 5000
+MAX_PENDING_FRAMES = 10
 
 
 # ---------------------------------------------------------------------------
@@ -88,21 +101,47 @@ class UdsClient:
     """Sends UDS requests over `transport` (write(bytes) / read() -> bytes)."""
 
     def __init__(self, transport, request_id: int = REQUEST_ID,
-                 response_id: int = RESPONSE_ID, timeout_ms: int = 1000):
+                 response_id: int = RESPONSE_ID, timeout_ms: int = 1000,
+                 p2_star_timeout_ms: int = P2_STAR_TIMEOUT_MS,
+                 max_pending_frames: int = MAX_PENDING_FRAMES):
         self.transport = transport
         self.request_id = request_id
         self.response_id = response_id
         self.timeout_ms = timeout_ms
+        self.p2_star_timeout_ms = p2_star_timeout_ms
+        self.max_pending_frames = max_pending_frames
 
     def _transact(self, request: bytes) -> bytes:
         self.transport.write(self.request_id, request)
-        response = self.transport.read(self.response_id, self.timeout_ms)
-        if response is None:
-            raise TransportError(f"no response to {request.hex()} (timeout {self.timeout_ms} ms)")
-        if response[0] == 0x7F:
-            code = response[2] if len(response) > 2 else 0
-            raise TransportError(f"negative response 0x{code:02X} to service 0x{request[0]:02X}")
-        return response
+        timeout_ms = self.timeout_ms
+        pending = 0
+        while True:
+            response = self.transport.read(self.response_id, timeout_ms)
+            if response is None:
+                raise TransportError(
+                    f"no response to {request.hex()} (timeout {timeout_ms} ms)")
+            if response[0] != 0x7F:
+                return response
+            if len(response) < 3:
+                raise TransportError(
+                    f"malformed negative response to service "
+                    f"0x{request[0]:02X}: {response.hex()}")
+            service = response[1]
+            code = response[2]
+            if code == 0x78 and service == request[0]:
+                # ResponsePending for OUR service — wait on P2* for the
+                # real answer, bounded by max_pending_frames.
+                pending += 1
+                if pending > self.max_pending_frames:
+                    raise TransportError(
+                        f"ECU still busy after {self.max_pending_frames} "
+                        f"responsePending (0x78) frames for service "
+                        f"0x{request[0]:02X} — giving up")
+                timeout_ms = self.p2_star_timeout_ms
+                continue
+            raise TransportError(
+                f"negative response 0x{code:02X} (service 0x{service:02X}) "
+                f"to service 0x{request[0]:02X}")
 
     def enter_session(self, session: int = 0x03) -> None:
         self._transact(bytes([0x10, session]))
@@ -239,6 +278,32 @@ def format_dtc(number: int) -> str:
     return f"{prefix}{number & 0x3FFF:04X}"
 
 
+def decode_dtc_status(status: int) -> dict:
+    """Decode the ISO 14229 DTC status byte carried in 0x19 responses.
+
+    The bits callers actually care about:
+      'confirmed' (bit 3) — the stored fault;
+      'pending'   (bit 2) — the fault maturing toward confirmation;
+      'testFailed'(bit 0) — the last test failed. NOT the same thing as
+        a stored code: a fault can be confirmed without currently
+        failing, and failing without yet being confirmed. Ad-hoc
+        `status & 0x01` checks conflate the two — use this helper.
+      'warningIndicator' (bit 7, warningIndicatorRequested) — what
+        actually corresponds to an illuminated MIL; the warning-lights
+        panel should key on this, not on any stored-code presence.
+    """
+    return {
+        "testFailed": bool(status & 0x01),
+        "testFailedThisOperationCycle": bool(status & 0x02),
+        "pending": bool(status & 0x04),
+        "confirmed": bool(status & 0x08),
+        "testNotCompletedSinceLastClear": bool(status & 0x10),
+        "testFailedSinceLastClear": bool(status & 0x20),
+        "testNotCompletedThisOperationCycle": bool(status & 0x40),
+        "warningIndicator": bool(status & 0x80),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Live-channel DID map + diesel candidates.
 #
@@ -362,8 +427,12 @@ class J2534Transport:
     """Byte transport over a J2534 pass-thru device using the ISO15765
     protocol, which performs ISO-TP segmentation in firmware."""
 
-    def __init__(self, device_name: str | None = None):
+    def __init__(self, device_name: str | None = None,
+                 request_id: int = REQUEST_ID,
+                 response_id: int = RESPONSE_ID):
         self.device_name = device_name
+        self.request_id = request_id
+        self.response_id = response_id
         self._lib = None
         self._device = None
         self._channel = None
@@ -385,12 +454,12 @@ class J2534Transport:
         self._lib.passThruStartMsgFilter(
             self._channel,
             filter_type=pyj2534.FLOW_CONTROL_FILTER,
-            mask_id=self.response_id_needed(),  # see note: tx/rx pair below
-            pattern_id=REQUEST_ID,
+            mask_id=self.response_id_needed(),
+            pattern_id=self.request_id,
         )
 
     def response_id_needed(self) -> int:
-        return RESPONSE_ID
+        return self.response_id
 
     def write(self, can_id: int, data: bytes) -> None:
         self._lib.passThruWriteMsgs(self._channel, [(can_id, data)])
@@ -479,8 +548,11 @@ def _selftest() -> int:
         def __init__(self, responses):
             self.responses = list(responses)
             self.requests = []
+            self.timeouts = []
         def write(self, can_id, data): self.requests.append(bytes(data))
-        def read(self, can_id, timeout): return self.responses.pop(0)
+        def read(self, can_id, timeout):
+            self.timeouts.append(timeout)
+            return self.responses.pop(0)
 
     # DID probing: one DID answers, one is rejected (0x7F 22 31)
     client = UdsClient(RecordingTransport([
@@ -586,6 +658,99 @@ def _selftest() -> int:
     check("0x31 encode + parse",
           recorder.requests[0] == bytes.fromhex("31010203") and status == bytes.fromhex("E7"),
           recorder.requests[0].hex())
+
+    # NRC 0x78 (responsePending): keep waiting on P2*, then take the real
+    # response. VAG ECUs emit this routinely (e.g. before a 0x22 answer).
+    recorder = RecordingTransport([
+        bytes.fromhex("7F2278"),            # pending for our 0x22
+        bytes.fromhex("62F40C0C30"),        # the real answer
+    ])
+    client = UdsClient(recorder)
+    payload = client.read_did(0xF40C)
+    check("0x78 pending then real response", payload == bytes.fromhex("0C30"),
+          payload.hex())
+    check("0x78 wait uses P2* timeout",
+          recorder.timeouts == [1000, P2_STAR_TIMEOUT_MS], str(recorder.timeouts))
+
+    # Repeated pending frames are still tolerated
+    recorder = RecordingTransport([
+        bytes.fromhex("7F2278"), bytes.fromhex("7F2278"), bytes.fromhex("7F2278"),
+        bytes.fromhex("62F40C0C30"),
+    ])
+    client = UdsClient(recorder)
+    check("0x78 repeated pending tolerated",
+          client.read_did(0xF40C) == bytes.fromhex("0C30"))
+
+    # ...but bounded: a stuck ECU can't pend forever
+    recorder = RecordingTransport([bytes.fromhex("7F2278")] * 20)
+    client = UdsClient(recorder, max_pending_frames=3)
+    try:
+        client.read_did(0xF40C)
+        check("0x78 unbounded pending raises", False, "no exception")
+    except TransportError as exc:
+        check("0x78 unbounded pending raises",
+              "responsePending" in str(exc) and len(recorder.responses) == 16,
+              str(exc))
+
+    # A pending echo for a DIFFERENT service is not ours — raise, don't swallow
+    client = UdsClient(RecordingTransport([bytes.fromhex("7F2E78")]))
+    try:
+        client.read_did(0xF40C)
+        check("0x78 wrong-service echo raises", False, "no exception")
+    except TransportError as exc:
+        check("0x78 wrong-service echo raises", "0x78" in str(exc), str(exc))
+
+    # Every other NRC still raises immediately
+    client = UdsClient(RecordingTransport([bytes.fromhex("7F2231")]))
+    try:
+        client.read_did(0xF40C)
+        check("NRC 0x31 still raises", False, "no exception")
+    except TransportError as exc:
+        check("NRC 0x31 still raises", "0x31" in str(exc), str(exc))
+
+    # DTC status byte decode: bit 3 = confirmed (stored), bit 2 = pending,
+    # bit 0 = testFailed — NOT interchangeable (ISO 14229 statusOfDTC).
+    s = decode_dtc_status(0x09)  # 0000_1001: confirmed + testFailed
+    check("dtc status confirmed+testFailed",
+          s["confirmed"] and s["testFailed"] and not s["pending"], str(s))
+    s = decode_dtc_status(0x04)  # pending only, not yet stored
+    check("dtc status pending-only",
+          s["pending"] and not s["confirmed"] and not s["testFailed"], str(s))
+    s = decode_dtc_status(0x08)  # stored, not currently failing
+    check("dtc status stored-not-failing",
+          s["confirmed"] and not s["testFailed"], str(s))
+    s = decode_dtc_status(0x88)  # confirmed + warningIndicatorRequested (MIL)
+    check("dtc status warning indicator (MIL)",
+          s["warningIndicator"] and s["confirmed"], str(s))
+
+    # J2534 flow-control filter uses the pair it was configured with:
+    # engine 0x7E0/0x7E8 by default, TCU 0x7E1/0x7E9 when asked.
+    import types as _types
+    fake = _types.ModuleType("pyj2534")
+    fake.ISO15765 = 6
+    fake.ISO15765_FRAME_PAD = 0x40
+    fake.FLOW_CONTROL_FILTER = 0x03
+    fake.filters = []
+
+    class _FakeJ2534:
+        def passThruOpen(self, name): return object()
+        def passThruConnect(self, dev, proto, flags, bitrate): return object()
+        def passThruStartMsgFilter(self, chan, filter_type, mask_id, pattern_id):
+            fake.filters.append((mask_id, pattern_id))
+    fake.J2534 = _FakeJ2534
+    sys.modules["pyj2534"] = fake
+    try:
+        engine_transport = J2534Transport()
+        engine_transport.open()
+        tcu_transport = J2534Transport(request_id=TCU_REQUEST_ID,
+                                       response_id=TCU_RESPONSE_ID)
+        tcu_transport.open()
+    finally:
+        del sys.modules["pyj2534"]
+    check("j2534 filter defaults to engine pair",
+          fake.filters[0] == (0x7E8, 0x7E0), str(fake.filters))
+    check("j2534 filter honours TCU pair",
+          fake.filters[1] == (0x7E9, 0x7E1), str(fake.filters))
 
     print(f"{len(failures)} failure(s)" if failures else "all checks passed")
     return 1 if failures else 0
