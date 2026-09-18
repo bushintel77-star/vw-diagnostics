@@ -69,8 +69,9 @@ const AssistantCard = ({
         AI Diagnostic Assistant
       </CardTitle>
       <CardDescription>
-        Streaming statistical analysis on-device — learns this vehicle's
-        baselines and predicts trends
+        {analysis === null
+          ? "On-device statistical analysis — runs once a session connects"
+          : "Streaming statistical analysis on-device — learns this vehicle's baselines and predicts trends"}
       </CardDescription>
     </CardHeader>
     {analysis === null ? (

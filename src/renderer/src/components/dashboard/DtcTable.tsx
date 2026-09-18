@@ -33,7 +33,8 @@ const freezeFrameText = (frame: DtcCode["freezeFrame"]): string =>
     : "—";
 
 interface DtcTableProps {
-  codes: DtcCode[];
+  /** null = never read this session; [] = ECU read, zero faults reported. */
+  codes: DtcCode[] | null;
   /** Session active — clearing requires a running monitor. */
   running: boolean;
   onClear: () => void;
@@ -67,7 +68,7 @@ const DtcTable = ({ codes, running, onClear }: DtcTableProps) => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           Fault Codes
-          {codes.length > 0 && (
+          {codes !== null && codes.length > 0 && (
             <Badge
               variant={
                 codes.some((c) => c.status === "Active") ? "destructive" : "secondary"
@@ -80,7 +81,7 @@ const DtcTable = ({ codes, running, onClear }: DtcTableProps) => {
             size="sm"
             variant={confirming ? "destructive" : "outline"}
             className="ml-auto h-7 text-xs"
-            disabled={codes.length === 0 || !running}
+            disabled={!codes || codes.length === 0 || !running}
             onClick={handleClearClick}
           >
             <Eraser className="size-3.5" />
@@ -91,8 +92,16 @@ const DtcTable = ({ codes, running, onClear }: DtcTableProps) => {
           Diagnostic Trouble Codes with freeze-frame conditions (UDS 0x19)
         </CardDescription>
       </CardHeader>
-      {codes.length === 0 ? (
+      {codes === null ? (
         <CardContent>
+          <p className="text-sm text-muted-foreground">
+            No data — connect an interface and start a session to read fault
+            codes from the ECU.
+          </p>
+        </CardContent>
+      ) : codes.length === 0 ? (
+        <CardContent>
+          {/* Genuine result: the ECU was read (UDS 0x19) and reported none. */}
           <p className="text-sm text-muted-foreground">No fault codes stored.</p>
         </CardContent>
       ) : (

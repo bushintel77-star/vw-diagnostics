@@ -102,20 +102,22 @@ const SEVERITY_STYLES: Record<Severity, string> = {
 };
 
 interface WarningLightsProps {
-  codes: DtcCode[];
+  /** null = never read this session; [] = ECU read, zero faults reported. */
+  codes: DtcCode[] | null;
   live: LiveValues | null;
 }
 
 const WarningLights = ({ codes, live }: WarningLightsProps) => {
+  const codeList = codes ?? [];
   const hasCode = (prefixes: string[], status?: DtcCode["status"]) =>
-    codes.some(
+    codeList.some(
       (c) =>
         prefixes.some((p) => c.code.startsWith(p)) &&
         (status === undefined || c.status === status)
     );
 
-  const stored = codes.filter((c) => c.status !== "Pending");
-  const pending = codes.filter((c) => c.status === "Pending");
+  const stored = codeList.filter((c) => c.status !== "Pending");
+  const pending = codeList.filter((c) => c.status === "Pending");
   const glowFault = hasCode(["P067"]);
   const dpfStored = hasCode(["P2002", "P2463"], "Stored");
   const dpfPending = hasCode(["P2002", "P2463"], "Pending");
@@ -130,8 +132,10 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
           ? `Stored fault codes (${stored.map((c) => c.code).join(", ")})`
           : pending.length > 0
             ? `Pending fault codes (${pending.map((c) => c.code).join(", ")})`
-            : "No fault codes stored",
-      on: codes.length > 0,
+            : codes === null
+              ? "No fault-code data"
+              : "No fault codes stored",
+      on: codeList.length > 0,
       severity: "amber",
       blinking: pending.length > 0 && stored.length === 0,
       icon: EngineIcon,
@@ -143,7 +147,9 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
         ? "Glow plug circuit fault stored"
         : live && live.coolantTempC < 20
           ? "Preheat — engine cold"
-          : "Glow plugs ready",
+          : codes === null && live === null
+            ? "No data"
+            : "Glow plugs ready",
       on: glowFault || (live !== null && live.coolantTempC < 20),
       severity: "amber",
       icon: GlowIcon,
@@ -155,7 +161,9 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
         ? "Particulate filter: regeneration needed (pending code)"
         : dpfStored
           ? "Particulate filter efficiency fault stored"
-          : "Particulate filter OK",
+          : codes === null
+            ? "No fault-code data"
+            : "Particulate filter OK",
       on: dpfStored || dpfPending,
       severity: "amber",
       blinking: dpfPending && !dpfStored,
@@ -166,7 +174,9 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
       label: "AdBlue / SCR",
       hint: scrFault
         ? "NOx aftertreatment fault stored"
-        : "NOx aftertreatment OK",
+        : codes === null
+          ? "No fault-code data"
+          : "NOx aftertreatment OK",
       on: scrFault,
       severity: "amber",
       icon: ScrIcon,
@@ -177,7 +187,9 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
       hint:
         live && live.batteryV < 12.5
           ? `Charging voltage low (${live.batteryV.toFixed(1)} V)`
-          : "Charging system OK",
+          : live === null
+            ? "No live data"
+            : "Charging system OK",
       on: live !== null && live.batteryV < 12.5,
       severity: "red",
       icon: BatteryIcon,
@@ -190,7 +202,9 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
           ? `Overheating (${live.coolantTempC} °C) — stop safely`
           : live && live.coolantTempC < 50
             ? `Engine cold (${live.coolantTempC} °C)`
-            : "Coolant temperature normal",
+            : live === null
+              ? "No live data"
+              : "Coolant temperature normal",
       on: live !== null && (live.coolantTempC > 105 || live.coolantTempC < 50),
       severity: live && live.coolantTempC > 105 ? "red" : "blue",
       blinking: live !== null && live.coolantTempC > 105,
@@ -234,7 +248,9 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
         <p className="mt-3 text-center text-[10px] text-muted-foreground">
           {anyOn
             ? "Red = stop safely · amber = caution / service · blue = engine cold"
-            : "All tell-tales off — no active warnings"}
+            : codes === null || live === null
+              ? "No data — connect an interface and start a session"
+              : "All tell-tales off — no active warnings"}
         </p>
       </CardContent>
     </Card>

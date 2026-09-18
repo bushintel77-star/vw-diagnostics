@@ -389,6 +389,44 @@ describe("Testing the VW diagnostic dashboard", () => {
     ).toBeVisible();
   });
 
+  test("an empty DTC read with a live session is a genuine clean result", async () => {
+    // [] means the ECU answered the 0x19 read with zero faults — distinct
+    // from null (never read), and it SHOULD still say so.
+    await act(async () => {
+      dashboardListener()(CONNECTED_STATUS);
+      dashboardListener()({ type: "dtc", codes: [] });
+    });
+
+    expect(screen.getByText("No fault codes stored.")).toBeVisible();
+    expect(
+      screen.getByText(/All tell-tales off — no active warnings/i)
+    ).toBeVisible();
+  });
+
+  test("session end resets a clean read back to the no-data state", async () => {
+    await act(async () => {
+      dashboardListener()(CONNECTED_STATUS);
+      dashboardListener()({ type: "dtc", codes: [] });
+    });
+    expect(screen.getByText("No fault codes stored.")).toBeVisible();
+
+    await act(async () => {
+      dashboardListener()({
+        type: "status",
+        phase: "disconnected",
+        message: "Session stopped by user.",
+        mode: "live",
+      });
+    });
+
+    // The stale "clean" result must not persist after the session drops.
+    expect(screen.queryByText(/No fault codes stored/i)).toBeNull();
+    expect(screen.queryByText(/no active warnings/i)).toBeNull();
+    expect(
+      screen.getAllByText(/No data — connect an interface/i).length
+    ).toBeGreaterThanOrEqual(1);
+  });
+
   test("coolant tell-tale turns blue when cold and red when overheating", async () => {
     // Cold engine: preheat also lights the glow-plug lamp
     await act(async () => {
@@ -458,6 +496,14 @@ describe("No J2534 interface attached", () => {
     expect(screen.queryByText(/WV1ZZZ/)).toBeNull();
     expect(screen.queryByText("P0299")).toBeNull();
     expect(screen.queryByText(/Stage 1 calibration/)).toBeNull();
+    // Absence of data must never render as an affirmative claim about the
+    // vehicle — these exact strings previously asserted a clean bill of
+    // health with zero evidence.
+    expect(screen.queryByText(/no active warnings/i)).toBeNull();
+    expect(screen.queryByText(/No fault codes stored/i)).toBeNull();
+    expect(
+      screen.getAllByText(/No data — connect an interface/i).length
+    ).toBeGreaterThanOrEqual(1);
   });
 
   test("Start Session surfaces the genuine transport error", async () => {

@@ -103,7 +103,9 @@ const App = () => {
   const [info, setInfo] = useState<EcuInfo | null>(null);
   const [dids, setDids] = useState<DidMapEntry[] | null>(null);
   const [flash, setFlash] = useState<DiagnosticFlashEvent | null>(null);
-  const [codes, setCodes] = useState<DtcCode[]>([]);
+  // null = never read this session (no data to report); [] = the ECU was
+  // actually read and reported zero faults — a genuine clean result.
+  const [codes, setCodes] = useState<DtcCode[] | null>(null);
   const [live, setLive] = useState<LiveValues | null>(null);
   const [analysis, setAnalysis] = useState<DiagnosticAnalysisEvent | null>(null);
   const [deletions, setDeletions] = useState<DiagnosticDeletionsEvent | null>(null);
@@ -135,6 +137,15 @@ const App = () => {
         case "status":
           setStatus(event);
           pushLog(event.message);
+          if (event.phase === "disconnected" || event.phase === "error") {
+            // Session data ends with the session — a stale "clean" read or
+            // frozen gauge must not persist as if it were current state.
+            setCodes(null);
+            setLive(null);
+            setHistory({});
+            setLastLiveAt(null);
+            setUpdates(0);
+          }
           break;
         case "info":
           setInfo(event.info);
@@ -187,6 +198,11 @@ const App = () => {
             message: event.message,
             mode: "live",
           });
+          setCodes(null);
+          setLive(null);
+          setHistory({});
+          setLastLiveAt(null);
+          setUpdates(0);
           pushLog(`Error: ${event.message}`);
           break;
       }
