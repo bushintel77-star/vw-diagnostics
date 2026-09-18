@@ -27,10 +27,13 @@ export interface EcuInfo {
   requestId: string;
   responseId: string;
   ecuName: string;
-  partNumber: string;
-  swVersion: string;
-  hwVersion: string;
-  coding: string;
+  /** Identity DIDs (0xF187/0xF189/0xF191/0xF18C) — null = the ECU did not
+   *  answer that DID. Never rendered as a value it didn't report. */
+  partNumber: string | null;
+  swVersion: string | null;
+  hwVersion: string | null;
+  serial: string | null;
+  coding: string | null;
   vin: string;
 }
 
@@ -45,21 +48,28 @@ export interface DtcCode {
   code: string;
   status: "Stored" | "Pending" | "Active";
   description: string;
-  mileageKm: number;
+  /** Odometer at the time the fault set — null when the session doesn't
+   *  read it. A fabricated 0 would render as a real measurement. */
+  mileageKm: number | null;
+  /** statusOfDTC bit 7 (warningIndicatorRequested) — the ECU asking for
+   *  the MIL tell-tale. Absent on sources that don't decode the byte. */
+  warningIndicator?: boolean;
   /** Conditions captured by the ECU when the fault set. */
   freezeFrame?: DtcFreezeFrame;
 }
 
+// A channel that failed to read is null, not its previous value — the UI
+// must show no-data rather than a frozen number.
 export interface LiveValues {
-  rpm: number;
-  speedKph: number;
-  coolantTempC: number;
-  intakeTempC: number;
-  boostPressureKpa: number;
-  pedalPct: number;
-  engineLoadPct: number;
-  batteryV: number;
-  railPressureBar: number;
+  rpm: number | null;
+  speedKph: number | null;
+  coolantTempC: number | null;
+  intakeTempC: number | null;
+  boostPressureKpa: number | null;
+  pedalPct: number | null;
+  engineLoadPct: number | null;
+  batteryV: number | null;
+  railPressureBar: number | null;
 }
 
 export interface DiagnosticInfoEvent {

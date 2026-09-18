@@ -496,6 +496,128 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(coolant).toHaveAttribute("data-state", "on");
     expect(coolant.getAttribute("title")).toContain("Overheating");
   });
+
+  test("a channel going null renders no-data — never a frozen value", async () => {
+    // Mock session has batteryV 14.02 (gauge renders one decimal: "14.0").
+    // When the channel stops reading it must not keep showing the last
+    // number — that would be stale data presented as live. (Battery: the
+    // trend chart stays on RPM, so its stats can't mask the assertion.)
+    expect(screen.getByText("14.0")).toBeVisible();
+
+    await act(async () => {
+      dashboardListener()({
+        type: "live",
+        values: {
+          rpm: 782, speedKph: 0, coolantTempC: 64, intakeTempC: 28,
+          boostPressureKpa: 100, pedalPct: 1.2, engineLoadPct: 22,
+          batteryV: null, railPressureBar: 288,
+        },
+        timestamp: "2026-08-15T04:00:04.000Z",
+      });
+    });
+
+    expect(screen.queryByText("14.0")).toBeNull();
+    expect(screen.getByText("—")).toBeVisible(); // the battery gauge
+    expect(
+      screen.getByRole("img", { name: /battery/i })
+    ).toHaveAttribute("title", "No battery reading");
+  });
+
+  test("the MIL keys on warningIndicatorRequested, not code presence", async () => {
+    // A stored code that did NOT request the warning indicator must not
+    // light the MIL — bit 7 of statusOfDTC is the lamp, not code presence.
+    await act(async () => {
+      dashboardListener()({
+        type: "dtc",
+        codes: [
+          {
+            code: "P0299",
+            status: "Stored",
+            warningIndicator: false,
+            description: "Turbo underboost (VNT)",
+            mileageKm: null,
+          },
+        ],
+      });
+    });
+    expect(screen.getByRole("img", { name: /check engine/i })).toHaveAttribute(
+      "data-state",
+      "off"
+    );
+
+    await act(async () => {
+      dashboardListener()({
+        type: "dtc",
+        codes: [
+          {
+            code: "P0299",
+            status: "Stored",
+            warningIndicator: true,
+            description: "Turbo underboost (VNT)",
+            mileageKm: null,
+          },
+        ],
+      });
+    });
+    expect(screen.getByRole("img", { name: /check engine/i })).toHaveAttribute(
+      "data-state",
+      "on"
+    );
+  });
+
+  test("unread mileage renders no-value — never a fabricated 0 km", async () => {
+    await act(async () => {
+      dashboardListener()({
+        type: "dtc",
+        codes: [
+          {
+            code: "P1234",
+            status: "Pending",
+            warningIndicator: false,
+            description: "No description available for this code",
+            mileageKm: null,
+            // A real freeze frame so only the mileage cell can be the dash.
+            freezeFrame: { rpm: 800, coolantTempC: 90, engineLoadPct: 20, speedKph: 0 },
+          },
+        ],
+      });
+    });
+
+    // Exact match: a fabricated 0 km mileage cell would read exactly
+    // "0 km" — "0 km/h" inside the freeze frame must not trip this.
+    expect(screen.queryByText("0 km")).toBeNull();
+    expect(screen.getByText("—")).toBeVisible();
+    expect(
+      screen.getByText("No description available for this code")
+    ).toBeVisible();
+  });
+
+  test("unread identity fields show 'not reported', not a placeholder", async () => {
+    // One DID answered (swVersion), the rest didn't — each is rendered
+    // distinctly from a real value.
+    await act(async () => {
+      dashboardListener()({
+        type: "info",
+        info: {
+          protocol: "ISO 15765-4 (CAN 500 kbps)",
+          requestId: "0x7E0",
+          responseId: "0x7E8",
+          ecuName: "Engine Control Module — Bosch EDC17 (3.0 V6 TDI)",
+          partNumber: null,
+          swVersion: "6177",
+          hwVersion: null,
+          serial: null,
+          coding: null,
+          vin: "(not reported)",
+        },
+      });
+    });
+
+    expect(screen.getByText(/6177/)).toBeVisible();
+    expect(
+      screen.getAllByText(/not reported/).length
+    ).toBeGreaterThanOrEqual(3);
+  });
 });
 
 describe("No J2534 interface attached", () => {

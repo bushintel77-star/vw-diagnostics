@@ -2,7 +2,9 @@ import { cn } from "@/utils";
 
 interface GaugeProps {
   label: string;
-  value: number;
+  /** null = the channel didn't read this sample — show no-data, never
+   *  a stale or substitute number. */
+  value: number | null;
   unit: string;
   min: number;
   max: number;
@@ -42,24 +44,31 @@ const Gauge = ({
   dangerAt,
   history,
 }: GaugeProps) => {
-  const fraction = Math.min(Math.max((value - min) / (max - min), 0), 1);
+  const hasValue = value !== null;
+  const fraction = hasValue
+    ? Math.min(Math.max((value - min) / (max - min), 0), 1)
+    : 0;
   const strokeColor =
-    dangerAt !== undefined && value >= dangerAt
-      ? "stroke-destructive"
-      : warnAt !== undefined && value >= warnAt
-        ? "stroke-chart-4"
-        : "stroke-chart-1";
-  const display = value.toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
+    !hasValue
+      ? "stroke-muted"
+      : dangerAt !== undefined && value >= dangerAt
+        ? "stroke-destructive"
+        : warnAt !== undefined && value >= warnAt
+          ? "stroke-chart-4"
+          : "stroke-chart-1";
+  const display = hasValue
+    ? value.toLocaleString(undefined, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      })
+    : "—";
   const stats =
     history && history.length > 1
       ? { lo: Math.min(...history), hi: Math.max(...history) }
       : null;
 
   return (
-    <div className="flex flex-col items-center gap-1.5">
+    <div className={cn("flex flex-col items-center gap-1.5", !hasValue && "opacity-50")}>
       <div className="relative w-full max-w-24">
         <svg viewBox="0 0 100 100" className="w-full -rotate-90">
           <circle

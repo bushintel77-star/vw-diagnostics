@@ -129,7 +129,9 @@ const DtcTable = ({ codes, running, onClear }: DtcTableProps) => {
                   {freezeFrameText(dtc.freezeFrame)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {dtc.mileageKm.toLocaleString()} km
+                  {dtc.mileageKm === null
+                    ? "—"
+                    : `${dtc.mileageKm.toLocaleString()} km`}
                 </TableCell>
               </TableRow>
             ))}

@@ -48,6 +48,10 @@ from collections import deque
 from datetime import datetime, timezone
 
 LIVE_INTERVAL_S = 0.5
+# responsePending (NRC 0x78) frames tolerated per DID on the live display
+# loop — far tighter than uds.MAX_PENDING_FRAMES, which is sized for
+# routine control and uploads, not a 2 Hz poll.
+LIVE_MAX_PENDING_FRAMES = 1
 
 # Alert thresholds reviewed on every live sample (real mode benefits too).
 ALERT_THRESHOLDS = {
@@ -176,7 +180,8 @@ def build_analysis(dtcs: list, values: dict | None, alerts: list | None = None,
             summary += f" {len(alerts)} live-data alert(s) active."
 
     advisories = list(alerts)
-    if values and 0 < values.get("coolantTempC", 90) < 80:
+    coolant = (values or {}).get("coolantTempC")
+    if coolant is not None and 0 < coolant < 80:
         advisories.append("Coolant below operating temperature — normal during warm-up.")
 
     event = {
@@ -300,6 +305,10 @@ class StreamTracker:
     def update(self, values: dict) -> None:
         self.seen += 1
         for name, value in values.items():
+            # A failed read is absence of data, not a sample — it must
+            # never touch the baseline or the plausibility counters.
+            if value is None:
+                continue
             # Range plausibility: physically impossible values are rejected.
             bounds = PLAUSIBLE.get(name)
             if bounds is not None and not (bounds[0] <= value <= bounds[1]):
@@ -577,26 +586,27 @@ def run_verification(transport, active_deletions: set, active_mods: set,
             substantive = True  # ECU read confirms the masked codes are gone
 
     # Live mode re-reads the channels straight from the ECU instead of
-    # trusting the last streamed sample.
+    # trusting the last streamed sample. Channels that failed to read are
+    # None — only the measured subset counts as evidence.
     values = transport.sample(0) if source == "ecu" else session.get("last_values")
+    measured = {k: v for k, v in (values or {}).items() if v is not None}
     breaches = []
-    if values:
-        for name, (lo, hi) in PLAUSIBLE.items():
-            v = values.get(name)
-            if v is not None and not (lo <= v <= hi):
-                breaches.append(f"{name}={v}")
+    for name, (lo, hi) in PLAUSIBLE.items():
+        v = measured.get(name)
+        if v is not None and not (lo <= v <= hi):
+            breaches.append(f"{name}={v}")
     items.append({
         "check": "Live channels within limits",
         # Absence of data is absence — skipped, never a pass or a fail.
-        "status": "fail" if breaches else ("pass" if values else "skipped"),
+        "status": "fail" if breaches else ("pass" if measured else "skipped"),
         "detail": ", ".join(breaches) if breaches
-        else "all channels plausible" if values
+        else "all channels plausible" if measured
         else "no live data received — nothing evaluated",
     })
-    if values and not breaches:
+    if measured and not breaches:
         substantive = True  # live channels re-read and evaluated
 
-    coolant = values.get("coolantTempC") if values else None
+    coolant = measured.get("coolantTempC")
     items.append({
         "check": f"Coolant within duty-profile limit ({profile['coolantMaxC']:.0f} °C)",
         "status": "fail" if (coolant is not None and coolant > profile["coolantMaxC"])
@@ -750,8 +760,8 @@ class RealTransport:
 
     Implements the transport interface (mode/device/read_info/read_dtcs/
     clear_dtcs/sample) so the monitor loop is transport-agnostic.
-    Read-only services are wired; write-side calibration channels are marked
-    TODO and arrive with Phase 2.
+    Read services are wired; calibration writing is deliberately absent —
+    this app plans and verifies changes, it does not write them.
     """
 
     mode = "live"
@@ -766,13 +776,38 @@ class RealTransport:
         "mode) — this app plans and verifies them, it does not write"
     )
 
-    def __init__(self, client):
+    # Standard ISO 14229 identification DIDs (ASCII via 0x22). 0xF189 is
+    # the one that matters most: bench flashing must match the calibration
+    # to the ECU's exact software version.
+    IDENTITY_DIDS = {
+        "partNumber": 0xF187,  # vehicleManufacturerSparePartNumber
+        "swVersion": 0xF189,   # vehicleManufacturerECUSoftwareVersionNumber
+        "hwVersion": 0xF191,   # vehicleManufacturerECUHardwareNumber
+        "serial": 0xF18C,      # ECUSerialNumber
+    }
+
+    def __init__(self, client, live_client=None):
         self.client = client
+        # The 2 Hz display loop runs on its own client with a tight
+        # responsePending bound: a slow DID must null out in seconds, not
+        # stall the dashboard behind the ~50 s bound long operations get.
+        self.live_client = live_client if live_client is not None else client
         # imported locally so uds.py is only required once a session opens
         import uds  # noqa: PLC0415
         self.uds = uds
         self.did_map = dict(uds.DID_MAP)  # copy — probing mutates per session
         self.info_cache: dict | None = None
+
+    def _read_ascii_did(self, did: int) -> str | None:
+        """One identification DID, read independently. None = the ECU did
+        not answer it (unsupported or read failed) — distinguishable from
+        a real value, never a placeholder."""
+        try:
+            raw = self.client.read_did(did)
+        except Exception:
+            return None
+        text = raw.decode("ascii", errors="replace").strip("\x00").strip()
+        return text or None
 
     def read_info(self) -> dict:
         if self.info_cache is None:
@@ -781,32 +816,49 @@ class RealTransport:
                 vin = self.client.read_vin()
             except Exception:
                 vin = ""
+            identity = {
+                field: self._read_ascii_did(did)
+                for field, did in self.IDENTITY_DIDS.items()
+            }
             self.info_cache = {
                 "protocol": "ISO 15765-4 (CAN 500 kbps)",
                 "requestId": "0x7E0",
                 "responseId": "0x7E8",
                 "ecuName": "Engine Control Module \u2014 Bosch EDC17 (3.0 V6 TDI)",
-                "partNumber": "\u2014",  # TODO: read DID 0xF18A part number once mapped
-                "swVersion": "\u2014",  # TODO: read DID 0xF189
-                "hwVersion": "\u2014",
-                "coding": "\u2014",
+                "coding": None,  # no standard DID for VAG coding — not reported
                 "vin": vin or "(not reported)",
+                **identity,
             }
         return self.info_cache
 
     def read_dtcs(self) -> list:
         records = self.client.read_dtcs()
-        # TODO: decode statusByte into Stored/Pending and attach freeze
-        # frames (UDS 0x22 env data / 0x19 04) once live data is available.
-        return [
-            {
+        # statusOfDTC is decoded per ISO 14229: bit 3 confirmed (stored),
+        # bit 2 pending, bit 0 testFailed — which is NOT the same as stored.
+        # Freeze frames (0x19 04) remain an honest gap: not yet read.
+        out = []
+        for r in records:
+            bits = self.uds.decode_dtc_status(r["statusByte"])
+            if bits["confirmed"]:
+                status = "Stored"
+            elif bits["pending"]:
+                status = "Pending"
+            elif bits["testFailed"]:
+                status = "Active"  # failing now, not yet stored
+            else:
+                status = "Pending"  # reported under the mask, unconfirmed
+            knowledge = ANALYSIS_KNOWLEDGE.get(r["code"])
+            out.append({
                 "code": r["code"],
-                "status": "Stored" if r["statusByte"] & 0x01 else "Pending",
-                "description": "(read from ECU \u2014 description map pending)",
-                "mileageKm": 0,
-            }
-            for r in records
-        ]
+                "status": status,
+                "warningIndicator": bits["warningIndicator"],
+                "description": (knowledge["title"] if knowledge
+                                else "No description available for this code"),
+                # We do not read odometer — a fabricated 0 km would look
+                # like a real measurement.
+                "mileageKm": None,
+            })
+        return out
 
     def clear_dtcs(self) -> int:
         self.client.clear_dtcs()
@@ -851,11 +903,10 @@ class RealTransport:
         )
 
     def sample(self, t: float) -> dict:
-        values = self.client.read_live(self.did_map)
-        # Channels without a confirmed DID yet read as None; keep the last
-        # plausible value flowing so the dashboard stays complete. (None
-        # itself is handled downstream by the plausibility layer.)
-        return {name: value for name, value in values.items() if value is not None}
+        # Failed reads come back as None and are propagated as None: a
+        # dead channel renders as no-data downstream (gauge em-dash, no
+        # history point), never as the last value frozen in place.
+        return self.live_client.read_live(self.did_map)
 
 
 def open_real_transport():
@@ -869,7 +920,14 @@ def open_real_transport():
         device.open()
     except uds.TransportError as exc:
         raise RuntimeError(str(exc)) from exc
-    return RealTransport(uds.UdsClient(device))
+    client = uds.UdsClient(device)
+    # One responsePending is normal; two means the channel is genuinely
+    # busy — null it out and keep the display loop moving. Long-running
+    # operations (identity reads, backup, routine control) keep the
+    # generous P2*/pending bound on the main client.
+    live_client = uds.UdsClient(
+        device, max_pending_frames=LIVE_MAX_PENDING_FRAMES)
+    return RealTransport(client, live_client)
 
 
 # ---------------------------------------------------------------------------
@@ -1101,7 +1159,12 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
 def check_alerts(values: dict, active: dict) -> list:
     newly = {}
     for key, (name, threshold, triggered, message) in ALERT_THRESHOLDS.items():
-        if triggered(values.get(key, 0), threshold):
+        value = values.get(key)
+        # No reading is not a reading — a dead channel must never fire an
+        # alert (or clear one) on a substitute value.
+        if value is None:
+            continue
+        if triggered(value, threshold):
             if name not in active:
                 newly[name] = message
             active[name] = message
@@ -1243,8 +1306,9 @@ class _NonWritableProbe:
         "mode) — this app plans and verifies them, it does not write"
     )
 
-    def __init__(self, dtcs: list | None = None):
+    def __init__(self, dtcs: list | None = None, sample: dict | None = None):
         self._dtcs = dtcs
+        self._sample = {} if sample is None else sample
 
     def read_dtcs(self) -> list:
         if self._dtcs is None:
@@ -1252,7 +1316,7 @@ class _NonWritableProbe:
         return list(self._dtcs)
 
     def sample(self, _t: float) -> dict:
-        return {}
+        return dict(self._sample)
 
     def clear_dtcs(self) -> int:
         return 0
@@ -1349,6 +1413,120 @@ def _selftest_writes(fixture) -> int:
                                    StreamTracker(warmup=4), v_session)
         checks.append(("applied work evaluated cleanly yields pass",
                        passing["verdict"] == "pass"))
+
+        # --- read-path: None channels are no-data, never stale ---
+
+        class _StubClient:
+            """Stands in for UdsClient: canned DID/DTC/live answers."""
+            def __init__(self, dids=None, dtc_records=None, live=None):
+                self._dids = dids or {}
+                self._dtc_records = dtc_records or []
+                self._live = live if live is not None else {}
+                self.read_live_calls = 0
+            def enter_session(self, session=0x03): pass
+            def read_vin(self): return "WV1ZZZ2H0JW123456"
+            def read_did(self, did):
+                if did not in self._dids:
+                    raise RuntimeError("unsupported DID")
+                return self._dids[did]
+            def read_dtcs(self): return list(self._dtc_records)
+            def read_live(self, did_map):
+                self.read_live_calls += 1
+                return dict(self._live)
+
+        # sample() propagates a dead channel as None — no frozen value.
+        rt = RealTransport(_StubClient(live={"rpm": None, "coolantTempC": 90}))
+        values = rt.sample(0)
+        checks.append(("sample propagates None channels",
+                       "rpm" in values and values["rpm"] is None
+                       and values["coolantTempC"] == 90))
+
+        # None never reaches the tracker or the alert thresholds.
+        t_none = StreamTracker(warmup=4)
+        t_none.update({"rpm": None})
+        checks.append(("tracker skips None samples",
+                       t_none.seen == 1 and "rpm" not in t_none.channels))
+        active: dict = {}
+        checks.append(("alerts skip None channels",
+                       check_alerts({"batteryV": None}, active) == []
+                       and not active))
+
+        # An all-None sample skips the live check — not "all plausible".
+        none_probe = _NonWritableProbe(sample={"rpm": None, "coolantTempC": None})
+        v_none = run_verification(none_probe, set(), set(),
+                                  StreamTracker(warmup=4), session)
+        live_item = next((i for i in v_none["items"]
+                          if i["check"] == "Live channels within limits"), None)
+        checks.append(("all-None sample skips the live check",
+                       live_item is not None and live_item["status"] == "skipped"
+                       and v_none["verdict"] == "inconclusive"))
+
+        # --- read-path: DTC status byte + descriptions + mileage ---
+
+        rt = RealTransport(_StubClient(dtc_records=[
+            {"code": "P0299", "statusByte": 0x09},  # confirmed+testFailed
+            {"code": "P1234", "statusByte": 0x04},  # pending only
+            {"code": "P0999", "statusByte": 0x01},  # testFailed only -> NOT Stored
+            {"code": "P2002", "statusByte": 0x88},  # confirmed + MIL requested
+        ]))
+        dtcs = {d["code"]: d for d in rt.read_dtcs()}
+        checks.append(("status byte decoded per ISO 14229",
+                       dtcs["P0299"]["status"] == "Stored"
+                       and dtcs["P1234"]["status"] == "Pending"
+                       and dtcs["P0999"]["status"] != "Stored"))
+        checks.append(("warningIndicator bit carried",
+                       dtcs["P2002"]["warningIndicator"] is True))
+        checks.append(("known code gets real description; unknown says so",
+                       dtcs["P0299"]["description"] == ANALYSIS_KNOWLEDGE["P0299"]["title"]
+                       and "no description" in dtcs["P1234"]["description"].lower()))
+        checks.append(("mileage is never fabricated",
+                       all(d["mileageKm"] is None for d in dtcs.values())))
+
+        # --- read-path: identity DIDs read independently ---
+
+        rt = RealTransport(_StubClient(dids={0xF187: b"2H0906027", 0xF189: b"6177"}))
+        info = rt.read_info()
+        checks.append(("identity DIDs read independently",
+                       info["partNumber"] == "2H0906027"
+                       and info["swVersion"] == "6177"
+                       and info["hwVersion"] is None
+                       and info["serial"] is None))
+
+        # --- read-path: the live poll gets the tight pending bound ---
+
+        primary = _StubClient(live={"rpm": 800})
+        poll = _StubClient(live={"rpm": 800})
+        rt = RealTransport(primary, poll)
+        rt.sample(0)
+        checks.append(("live polling uses the tight-bound client",
+                       poll.read_live_calls == 1 and primary.read_live_calls == 0))
+
+        import uds as _uds_mod
+        made = []
+        saved_client = _uds_mod.UdsClient
+        saved_transport = _uds_mod.J2534Transport
+
+        class _CapturedClient:
+            def __init__(self, device, **kwargs):
+                self.kwargs = kwargs
+                made.append(self)
+
+        class _StubDevice:
+            def __init__(self, *a, **k): pass
+            def open(self, bitrate=500000): pass
+
+        _uds_mod.UdsClient = _CapturedClient
+        _uds_mod.J2534Transport = _StubDevice
+        try:
+            open_real_transport()
+            checks.append(("live poll client gets a tight pending bound",
+                           len(made) == 2
+                           and made[1].kwargs.get("max_pending_frames")
+                           == LIVE_MAX_PENDING_FRAMES
+                           and "max_pending_frames" not in made[0].kwargs))
+        finally:
+            _uds_mod.UdsClient = saved_client
+            _uds_mod.J2534Transport = saved_transport
     finally:
         globals()["emit"] = real_emit
 

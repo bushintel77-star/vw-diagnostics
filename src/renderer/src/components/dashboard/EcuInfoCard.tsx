@@ -15,9 +15,14 @@ const rows = (info: EcuInfo): Array<[string, string]> => [
   ["ECU", info.ecuName],
   ["Protocol", info.protocol],
   ["Request / Response", `${info.requestId} / ${info.responseId}`],
-  ["Part number", info.partNumber],
-  ["Software / Hardware", `${info.swVersion} / ${info.hwVersion}`],
-  ["Coding", info.coding],
+  ["Part number", info.partNumber ?? "not reported"],
+  [
+    "Software / Hardware",
+    `${info.swVersion ?? "not reported"} / ${info.hwVersion ?? "not reported"}`,
+  ],
+  // Serial only appears when the ECU actually answered 0xF18C.
+  ...(info.serial ? ([["Serial", info.serial]] as Array<[string, string]>) : []),
+  ["Coding", info.coding ?? "not reported"],
 ];
 
 const formatBytes = (bytes: number): string =>

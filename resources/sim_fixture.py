@@ -38,15 +38,18 @@ class SimulatedTransport:
         "partNumber": "2H0906027",
         "swVersion": "6177",
         "hwVersion": "H14",
+        "serial": "1Z8907J00123",
         "coding": "0011721",
         "vin": "WV1ZZZ2H0JW123456",
     }
 
-    # freezeFrame = conditions captured when each fault set (UDS freeze frame)
+    # freezeFrame = conditions captured when each fault set (UDS freeze frame);
+    # warningIndicator = statusOfDTC bit 7, the ECU-requested MIL tell-tale.
     DTCS = [
         {
             "code": "P0299",
             "status": "Stored",
+            "warningIndicator": True,
             "description": "Turbocharger/supercharger underboost condition",
             "mileageKm": 186410,
             "freezeFrame": {"rpm": 2210, "coolantTempC": 88, "engineLoadPct": 71, "speedKph": 96},
@@ -54,6 +57,7 @@ class SimulatedTransport:
         {
             "code": "P0671",
             "status": "Stored",
+            "warningIndicator": True,
             "description": "Cylinder 1 glow plug circuit malfunction",
             "mileageKm": 186044,
             "freezeFrame": {"rpm": 795, "coolantTempC": 6, "engineLoadPct": 12, "speedKph": 0},
@@ -61,6 +65,7 @@ class SimulatedTransport:
         {
             "code": "P2002",
             "status": "Pending",
+            "warningIndicator": False,
             "description": "Diesel particulate filter efficiency below threshold (Bank 1)",
             "mileageKm": 186905,
             "freezeFrame": {"rpm": 2080, "coolantTempC": 84, "engineLoadPct": 41, "speedKph": 104},
@@ -68,6 +73,7 @@ class SimulatedTransport:
         {
             "code": "P2015",
             "status": "Stored",
+            "warningIndicator": True,
             "description": "Intake manifold runner position sensor (Bank 1): implausible signal",
             "mileageKm": 185772,
             "freezeFrame": {"rpm": 1490, "coolantTempC": 84, "engineLoadPct": 31, "speedKph": 43},

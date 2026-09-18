@@ -116,12 +116,30 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
         (status === undefined || c.status === status)
     );
 
-  const stored = codeList.filter((c) => c.status !== "Pending");
+  const stored = codeList.filter((c) => c.status === "Stored");
   const pending = codeList.filter((c) => c.status === "Pending");
+  const active = codeList.filter((c) => c.status === "Active");
+  // Stored or currently-failing codes — the ones that describe a real fault.
+  const flagged = [...stored, ...active];
+
+  // statusOfDTC bit 7 is the ECU actually requesting the MIL. When a real
+  // DTC read supplies it, the lamp keys on it — presence of a code alone
+  // is not an illuminated tell-tale. Sources that don't decode the byte
+  // fall back to code presence.
+  const anyMilBit = codeList.some((c) => c.warningIndicator !== undefined);
+  const milOn = anyMilBit
+    ? codeList.some((c) => c.warningIndicator === true)
+    : codeList.length > 0;
+
   const glowFault = hasCode(["P067"]);
   const dpfStored = hasCode(["P2002", "P2463"], "Stored");
   const dpfPending = hasCode(["P2002", "P2463"], "Pending");
   const scrFault = hasCode(["P204F", "P20E8", "P3057"]);
+
+  // null channel = the read failed this sample — a tell-tale must never
+  // assert a threshold on a value that isn't there.
+  const coolant = live?.coolantTempC ?? null;
+  const battery = live?.batteryV ?? null;
 
   const lamps: Lamp[] = [
     {
@@ -130,14 +148,16 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
       hint:
         stored.length > 0
           ? `Stored fault codes (${stored.map((c) => c.code).join(", ")})`
-          : pending.length > 0
-            ? `Pending fault codes (${pending.map((c) => c.code).join(", ")})`
-            : codes === null
-              ? "No fault-code data"
-              : "No fault codes stored",
-      on: codeList.length > 0,
+          : active.length > 0
+            ? `Active fault codes (${active.map((c) => c.code).join(", ")})`
+            : pending.length > 0
+              ? `Pending fault codes (${pending.map((c) => c.code).join(", ")})`
+              : codes === null
+                ? "No fault-code data"
+                : "No fault codes stored",
+      on: milOn,
       severity: "amber",
-      blinking: pending.length > 0 && stored.length === 0,
+      blinking: pending.length > 0 && flagged.length === 0,
       icon: EngineIcon,
     },
     {
@@ -145,12 +165,14 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
       label: "Glow plugs",
       hint: glowFault
         ? "Glow plug circuit fault stored"
-        : live && live.coolantTempC < 20
+        : coolant !== null && coolant < 20
           ? "Preheat — engine cold"
-          : codes === null && live === null
-            ? "No data"
+          : coolant === null
+            ? live === null
+              ? "No live data"
+              : "No coolant reading"
             : "Glow plugs ready",
-      on: glowFault || (live !== null && live.coolantTempC < 20),
+      on: glowFault || (coolant !== null && coolant < 20),
       severity: "amber",
       icon: GlowIcon,
     },
@@ -185,12 +207,14 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
       id: "battery",
       label: "Battery",
       hint:
-        live && live.batteryV < 12.5
-          ? `Charging voltage low (${live.batteryV.toFixed(1)} V)`
-          : live === null
-            ? "No live data"
+        battery !== null && battery < 12.5
+          ? `Charging voltage low (${battery.toFixed(1)} V)`
+          : battery === null
+            ? live === null
+              ? "No live data"
+              : "No battery reading"
             : "Charging system OK",
-      on: live !== null && live.batteryV < 12.5,
+      on: battery !== null && battery < 12.5,
       severity: "red",
       icon: BatteryIcon,
     },
@@ -198,16 +222,18 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
       id: "coolant",
       label: "Coolant",
       hint:
-        live && live.coolantTempC > 105
-          ? `Overheating (${live.coolantTempC} °C) — stop safely`
-          : live && live.coolantTempC < 50
-            ? `Engine cold (${live.coolantTempC} °C)`
-            : live === null
-              ? "No live data"
+        coolant !== null && coolant > 105
+          ? `Overheating (${coolant} °C) — stop safely`
+          : coolant !== null && coolant < 50
+            ? `Engine cold (${coolant} °C)`
+            : coolant === null
+              ? live === null
+                ? "No live data"
+                : "No coolant reading"
               : "Coolant temperature normal",
-      on: live !== null && (live.coolantTempC > 105 || live.coolantTempC < 50),
-      severity: live && live.coolantTempC > 105 ? "red" : "blue",
-      blinking: live !== null && live.coolantTempC > 105,
+      on: coolant !== null && (coolant > 105 || coolant < 50),
+      severity: coolant !== null && coolant > 105 ? "red" : "blue",
+      blinking: coolant !== null && coolant > 105,
       icon: CoolantIcon,
     },
   ];

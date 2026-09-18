@@ -168,9 +168,12 @@ const App = () => {
             const next: Partial<Record<keyof LiveValues, number[]>> = {};
             for (const gauge of GAUGES) {
               const samples = prev[gauge.key] ?? [];
-              next[gauge.key] = [...samples, event.values[gauge.key]].slice(
-                -HISTORY_LENGTH
-              );
+              const value = event.values[gauge.key];
+              // A null channel is absence of data — it is not appended to
+              // the rolling history as if it were a reading.
+              next[gauge.key] = value === null
+                ? samples
+                : [...samples, value].slice(-HISTORY_LENGTH);
             }
             return next;
           });

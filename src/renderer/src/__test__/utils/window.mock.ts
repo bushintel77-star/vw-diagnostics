@@ -16,6 +16,7 @@ const MOCK_SESSION: DiagnosticEvent[] = [
       partNumber: "2H0906027",
       swVersion: "6177",
       hwVersion: "H14",
+      serial: "1Z8907J00123",
       coding: "0011721",
       vin: "WV1ZZZ2H0JW123456",
     },
@@ -26,6 +27,7 @@ const MOCK_SESSION: DiagnosticEvent[] = [
       {
         code: "P0299",
         status: "Stored",
+        warningIndicator: true,
         description: "Turbocharger/supercharger underboost condition",
         mileageKm: 186410,
         freezeFrame: { rpm: 2210, coolantTempC: 88, engineLoadPct: 71, speedKph: 96 },
