@@ -4,7 +4,6 @@ import { GetVersionsFn } from "@shared/types";
 // Thie file stores functions used for the front-end
 // to communicate with the main process directly
 
-export { runParser } from "./parser";
 export {
   startDiagnostic,
   stopDiagnostic,

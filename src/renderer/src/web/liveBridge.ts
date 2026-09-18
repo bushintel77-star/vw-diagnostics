@@ -94,8 +94,6 @@ async function tryLiveBridge(): Promise<boolean> {
     getVersions: () =>
       Promise.resolve({ electron: "web", chrome: "web", node: "web" } as never),
     triggerIPC: () => {},
-    runParser: () =>
-      Promise.resolve({ ok: true, result: null, stdout: "", stderr: "", exitCode: 0, durationMs: 0 }),
     startDiagnostic: async (options: StartDiagnosticOptions): Promise<DiagnosticSessionResult> => {
       const response = await post(base, "/start", options, token);
       if (!response) {

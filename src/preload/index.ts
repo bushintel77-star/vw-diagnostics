@@ -4,7 +4,6 @@ import {
   DiagnosticCommand,
   DiagnosticEvent,
   GetVersionsFn,
-  RunParserFn,
 } from "@shared/types";
 
 // The preload process plays a middleware role in bridging
@@ -20,8 +19,6 @@ try {
     getVersions: (...args: Parameters<GetVersionsFn>) =>
       ipcRenderer.invoke("getVersions", ...args),
     triggerIPC: () => ipcRenderer.invoke("triggerIPC"),
-    runParser: (...args: Parameters<RunParserFn>) =>
-      ipcRenderer.invoke("runParser", ...args),
     startDiagnostic: (options: { simulate: boolean }) =>
       ipcRenderer.invoke("diagnostic:start", options),
     stopDiagnostic: () => ipcRenderer.invoke("diagnostic:stop"),

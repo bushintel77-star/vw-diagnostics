@@ -427,6 +427,10 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(screen.getByText("0xF484")).toBeVisible(); // adopted rail-pressure DID
     expect(screen.getByText("railPressureBar")).toBeVisible();
     expect(screen.getByText("community EDC17 table (x0.1 bar)")).toBeVisible();
+    // corrected ISO 15031-5 mirror: speed is PID 0x0D, never 0x0B
+    expect(screen.getByText("speedKph")).toBeVisible();
+    expect(screen.getByText("0xF40D")).toBeVisible();
+    expect(screen.queryByText("0xF40B")).toBeNull();
   });
 
   test("backs up the stock ECU: button sends the read command, path is shown", async () => {

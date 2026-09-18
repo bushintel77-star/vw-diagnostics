@@ -193,8 +193,9 @@ const MOCK_SESSION: DiagnosticEvent[] = [
     type: "dids",
     entries: [
       { channel: "rpm", did: "0xF40C", ok: true, value: 790, note: "standard set" },
+      { channel: "speedKph", did: "0xF40D", ok: true, value: 0, note: "standard set" },
       { channel: "railPressureBar", did: "0xF484", ok: true, value: 300, note: "community EDC17 table (x0.1 bar)" },
-      { channel: "boostPressureKpa", did: "0xF40E", ok: true, value: 100, note: "absolute charge pressure (x0.03 kPa)" },
+      { channel: "boostPressureKpa", did: "0xF4A3", ok: true, value: 100, note: "charge pressure (x0.03 kPa, community table)" },
       { channel: "pedalPct", did: "0xF4A1", ok: true, value: 0, note: "accelerator position (x100/255 %)" },
     ],
   },
@@ -253,16 +254,6 @@ const context = Object.defineProperty(window, "context", {
       node: "0.0",
     })),
     triggerIPC: vi.fn().mockImplementation(() => {}),
-    runParser: vi.fn().mockImplementation(() =>
-      Promise.resolve({
-        ok: true,
-        result: null,
-        stdout: "",
-        stderr: "",
-        exitCode: 0,
-        durationMs: 0,
-      })
-    ),
     startDiagnostic: vi.fn().mockImplementation(() =>
       Promise.resolve({
         started: true,

@@ -52,7 +52,7 @@ interface PythonCandidate {
   args: string[];
 }
 
-// Same resolution order as the parser: PARSER_PYTHON override, then the
+// Monitor interpreter resolution: PARSER_PYTHON override, then the
 // usual interpreter names per platform.
 function pythonCandidates(): PythonCandidate[] {
   const candidates: PythonCandidate[] = [];

@@ -1,6 +1,5 @@
 import {
   GetVersionsFn,
-  RunParserFn,
   SendDiagnosticCommandFn,
   StartDiagnosticFn,
   StopDiagnosticFn,
@@ -13,7 +12,6 @@ declare global {
     context: {
       getVersions: GetVersionsFn;
       triggerIPC: () => void;
-      runParser: RunParserFn;
       startDiagnostic: StartDiagnosticFn;
       stopDiagnostic: StopDiagnosticFn;
       sendDiagnosticCommand: SendDiagnosticCommandFn;

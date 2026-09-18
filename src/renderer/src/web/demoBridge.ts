@@ -170,13 +170,13 @@ const SCOPE = {
 
 const SIM_DID_ENTRIES: DidMapEntry[] = [
   { channel: "rpm", did: "0xF40C", ok: true, value: 790, note: "standard set" },
-  { channel: "speedKph", did: "0xF40B", ok: true, value: 0, note: "standard set" },
+  { channel: "speedKph", did: "0xF40D", ok: true, value: 0, note: "standard set" },
   { channel: "coolantTempC", did: "0xF405", ok: true, value: 90, note: "standard set" },
-  { channel: "intakeTempC", did: "0xF40D", ok: true, value: 32, note: "standard set" },
+  { channel: "intakeTempC", did: "0xF40F", ok: true, value: 32, note: "standard set" },
   { channel: "engineLoadPct", did: "0xF404", ok: true, value: 24, note: "standard set" },
   { channel: "batteryV", did: "0xF448", ok: true, value: 14.0, note: "standard set (unconfirmed on DDXC)" },
   { channel: "railPressureBar", did: "0xF484", ok: true, value: 300, note: "community EDC17 table (x0.1 bar)" },
-  { channel: "boostPressureKpa", did: "0xF40E", ok: true, value: 100, note: "absolute charge pressure (x0.03 kPa)" },
+  { channel: "boostPressureKpa", did: "0xF4A3", ok: true, value: 100, note: "charge pressure (x0.03 kPa, community table)" },
   { channel: "pedalPct", did: "0xF4A1", ok: true, value: 0, note: "accelerator position (x100/255 %)" },
 ];
 
@@ -538,8 +538,6 @@ export const ensureDemoContext = (): void => {
     getVersions: () =>
       Promise.resolve({ electron: "demo", chrome: "demo", node: "demo" } as never),
     triggerIPC: () => {},
-    runParser: () =>
-      Promise.resolve({ ok: true, result: null, stdout: "", stderr: "", exitCode: 0, durationMs: 0 }),
     startDiagnostic: bridge.startDiagnostic,
     stopDiagnostic: bridge.stopDiagnostic,
     sendDiagnosticCommand: bridge.sendDiagnosticCommand,

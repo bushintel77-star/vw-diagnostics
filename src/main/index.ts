@@ -2,8 +2,8 @@ import { app, shell, BrowserWindow, ipcMain } from "electron";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import icon from "../../resources/icon.png?asset";
-import { getVersions, triggerIPC, runParser, startDiagnostic, stopDiagnostic, sendDiagnosticCommand } from "@/lib";
-import { GetVersionsFn, RunParserFn } from "@shared/types";
+import { getVersions, triggerIPC, startDiagnostic, stopDiagnostic, sendDiagnosticCommand } from "@/lib";
+import { GetVersionsFn } from "@shared/types";
 
 function createWindow(): void {
   // Create the browser window.
@@ -68,11 +68,6 @@ app.whenReady().then(() => {
   );
 
   ipcMain.handle("triggerIPC", () => triggerIPC());
-
-  ipcMain.handle(
-    "runParser",
-    (_, ...args: Parameters<RunParserFn>) => runParser(...args)
-  );
 
   ipcMain.handle("diagnostic:start", (event, options) =>
     startDiagnostic(event.sender, options)

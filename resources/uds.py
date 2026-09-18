@@ -8,9 +8,14 @@ Layers:
   - J2534Transport: wraps the pyj2534 package (PassThruOpen/Connect/Filter/
     Write/Read). All hardware calls raise with actionable messages until a
     pass-thru device is installed.
-  - DID_MAP: live-channel -> DID mapping with scaling. Starter set uses the
-    standard VAG 0xF4xx (J1979-style) DIDs -- verify against the DDXC label
-    data once the ECU is connected.
+  - DID_MAP: live-channel -> DID mapping with scaling. The 0xF4xx range
+    mirrors ISO 15031-5 / SAE J1979 service-01 PIDs (DID = 0xF400 + PID),
+    so the low byte MUST match the standard PID table:
+      04 calculated load, 05 coolant, 0B intake MAP, 0C rpm,
+      0D vehicle speed, 0E timing advance, 0F intake air temp.
+    Entries are (did, nbytes, scaler); decodes are width-checked so a
+    wrong-width answer nulls one channel instead of over-reading. Verify
+    the batteryV DID against the DDXC label data once the ECU is connected.
 
 Run `python uds.py --selftest` to exercise the pure protocol layer offline.
 """
@@ -132,11 +137,18 @@ class UdsClient:
         self._transact(bytes([0x14, 0xFF, 0xFF, 0xFF]))
 
     def read_live(self, did_map: dict) -> dict:
+        """Read every mapped DID. Width is validated before scaling; any
+        per-channel failure (timeout, NRC, wrong width, decode error) nulls
+        that channel only — one bad DID can never kill the session."""
         values = {}
-        for name, (did, scaler) in did_map.items():
+        for name, (did, nbytes, scaler) in did_map.items():
             try:
-                values[name] = scaler(self.read_did(did))
-            except TransportError:
+                payload = self.read_did(did)
+                if len(payload) < nbytes:
+                    raise ValueError(
+                        f"wrong width: got {len(payload)} bytes, want {nbytes}")
+                values[name] = scaler(payload)
+            except (TransportError, IndexError, ValueError):
                 values[name] = None
         return values
 
@@ -239,27 +251,50 @@ def format_dtc(number: int) -> str:
 # is learned from the vehicle instead of hardcoded on faith.
 # ---------------------------------------------------------------------------
 
+# (did, nbytes, scaler). Low bytes are ISO 15031-5 / SAE J1979 PIDs:
+#   0x04 calculated load, 0x05 coolant (-40), 0x0C rpm (/4),
+#   0x0D vehicle speed, 0x0F intake air temp (-40).
 DID_MAP = {
-    "rpm": (0xF40C, lambda b: ((b[0] << 8) | b[1]) * 0.25),
-    "speedKph": (0xF40B, lambda b: b[0]),
-    "coolantTempC": (0xF405, lambda b: b[0] - 40),
-    "intakeTempC": (0xF40D, lambda b: b[0] - 40),
-    "engineLoadPct": (0xF404, lambda b: b[0] * 100 / 255),
-    "batteryV": (0xF448, lambda b: b[0] * 0.1),  # TODO: confirm on DDXC
+    "rpm": (0xF40C, 2, lambda b: ((b[0] << 8) | b[1]) * 0.25),
+    "speedKph": (0xF40D, 1, lambda b: b[0]),
+    "coolantTempC": (0xF405, 1, lambda b: b[0] - 40),
+    "intakeTempC": (0xF40F, 1, lambda b: b[0] - 40),
+    "engineLoadPct": (0xF404, 1, lambda b: b[0] * 100 / 255),
+    "batteryV": (0xF448, 1, lambda b: b[0] * 0.1),  # TODO: confirm on DDXC
 }
 
+# Inverse scalers (value -> DID payload bytes). Used by the simulated
+# transport so simulated traffic flows through the SAME decode path as
+# real hardware — the mapping itself is exercised, not bypassed.
+DID_ENCODERS = {
+    "rpm": lambda v: (lambda raw: bytes([raw >> 8, raw & 0xFF]))(int(round(v * 4))),
+    "speedKph": lambda v: bytes([int(v) & 0xFF]),
+    "coolantTempC": lambda v: bytes([int(round(v + 40)) & 0xFF]),
+    "intakeTempC": lambda v: bytes([int(round(v + 40)) & 0xFF]),
+    "engineLoadPct": lambda v: bytes([int(round(v * 255 / 100)) & 0xFF]),
+    "batteryV": lambda v: bytes([int(round(v * 10)) & 0xFF]),
+    "railPressureBar": lambda v: (lambda raw: bytes([raw >> 8, raw & 0xFF]))(int(round(v * 10))),
+    "boostPressureKpa": lambda v: (lambda raw: bytes([raw >> 8, raw & 0xFF]))(int(round(v / 0.03))),
+    "pedalPct": lambda v: bytes([int(round(v * 255 / 100)) & 0xFF]),
+}
+
+# (did, nbytes, scaler, note). Probed in order at first live connect;
+# adoption now REQUIRES the response width to match nbytes.
+# 0xF40E is deliberately absent from boost candidates: PID 0x0E is
+# timing advance (1 byte) per ISO 15031-5, and a 2-byte read of it
+# either crashes or mislabels timing as pressure.
 DID_CANDIDATES = {
     "railPressureBar": [
-        (0xF484, lambda b: ((b[0] << 8) | b[1]) * 0.1, "community EDC17 table (x0.1 bar)"),
-        (0xF485, lambda b: ((b[0] << 8) | b[1]) * 0.1, "alternate rail DID (x0.1 bar)"),
+        (0xF484, 2, lambda b: ((b[0] << 8) | b[1]) * 0.1, "community EDC17 table (x0.1 bar)"),
+        (0xF485, 2, lambda b: ((b[0] << 8) | b[1]) * 0.1, "alternate rail DID (x0.1 bar)"),
     ],
     "boostPressureKpa": [
-        (0xF40E, lambda b: ((b[0] << 8) | b[1]) * 0.03, "absolute charge pressure (x0.03 kPa)"),
-        (0xF4A3, lambda b: ((b[0] << 8) | b[1]) * 0.03, "alternate boost DID (x0.03 kPa)"),
+        (0xF4A3, 2, lambda b: ((b[0] << 8) | b[1]) * 0.03, "charge pressure (x0.03 kPa, community table)"),
+        (0xF40B, 1, lambda b: float(b[0]), "J1979 intake MAP fallback (x1 kPa) — SATURATES at 255 kPa, cannot show stage-1 boost"),
     ],
     "pedalPct": [
-        (0xF4A1, lambda b: b[0] * 100 / 255, "accelerator position (x100/255 %)"),
-        (0xF492, lambda b: b[0] * 100 / 255, "alternate pedal DID (x100/255 %)"),
+        (0xF4A1, 1, lambda b: b[0] * 100 / 255, "accelerator position (x100/255 %)"),
+        (0xF492, 1, lambda b: b[0] * 100 / 255, "alternate pedal DID (x100/255 %)"),
     ],
 }
 
@@ -267,14 +302,24 @@ DID_CANDIDATES = {
 def probe_dids(client, did_map: dict | None = None) -> list[dict]:
     """Probe every mapped DID with 0x22; report which the ECU answers.
 
+    A DID only passes when it answers AND the response width matches the
+    map — a mislabelled DID answers politely, so width is the cheapest
+    semantic check available without the truck running a known state.
+
     Returns [{channel, did, ok, value, note}] — `value` is the scaled
-    reading when the DID answers, None otherwise."""
+    reading when the DID passes, None otherwise."""
     did_map = did_map if did_map is not None else DID_MAP
     results = []
-    for name, (did, scaler) in did_map.items():
+    for name, (did, nbytes, scaler) in did_map.items():
         try:
-            value = scaler(client.read_did(did))
-            results.append({"channel": name, "did": did, "ok": True, "value": value,
+            payload = client.read_did(did)
+            if len(payload) != nbytes:
+                results.append({"channel": name, "did": did, "ok": False,
+                                "value": None,
+                                "note": f"answered but wrong width "
+                                        f"(got {len(payload)}, want {nbytes}) — rejected"})
+                continue
+            results.append({"channel": name, "did": did, "ok": True, "value": scaler(payload),
                             "note": "standard set"})
         except TransportError:
             results.append({"channel": name, "did": did, "ok": False, "value": None,
@@ -283,20 +328,27 @@ def probe_dids(client, did_map: dict | None = None) -> list[dict]:
 
 
 def probe_candidates(client, channel: str) -> tuple[tuple | None, list[dict]]:
-    """Try DID_CANDIDATES[channel] in order; the first DID the ECU answers
-    wins. Returns ((did, scaler) adopted or None, [attempt entries])."""
+    """Try DID_CANDIDATES[channel] in order; the first DID that answers
+    with the expected width is adopted. Returns ((did, nbytes, scaler)
+    adopted or None, [attempt entries])."""
     adopted = None
     attempts = []
-    for did, scaler, note in DID_CANDIDATES.get(channel, []):
+    for did, nbytes, scaler, note in DID_CANDIDATES.get(channel, []):
         try:
-            value = scaler(client.read_did(did))
+            payload = client.read_did(did)
         except TransportError:
             attempts.append({"channel": channel, "did": did, "ok": False,
                              "value": None, "note": note})
             continue
+        if len(payload) != nbytes:
+            attempts.append({"channel": channel, "did": did, "ok": False,
+                             "value": None,
+                             "note": note + " — answered but wrong width "
+                                     f"(got {len(payload)}, want {nbytes}), rejected"})
+            continue
         attempts.append({"channel": channel, "did": did, "ok": True,
-                         "value": value, "note": note})
-        adopted = (did, scaler)
+                         "value": scaler(payload), "note": note})
+        adopted = (did, nbytes, scaler)
         break
     return adopted, attempts
 
@@ -405,12 +457,21 @@ def _selftest() -> int:
     client = UdsClient(FakeTransport(payload))
     check("vin decode", client.read_vin() == "WV1ZZZ2H0JW123456", client.read_vin())
 
-    # Scaling math
-    check("rpm scale", DID_MAP["rpm"][1](bytes([0x0C, 0x30])) == 780.0)      # 3120 * 0.25
-    check("coolant scale", DID_MAP["coolantTempC"][1](bytes([0x8A])) == 98)  # 138 - 40
-    check("rail candidate scale", DID_CANDIDATES["railPressureBar"][0][1](bytes([0x0B, 0xB8])) == 300.0)
-    check("boost candidate scale", DID_CANDIDATES["boostPressureKpa"][0][1](bytes([0x27, 0x10])) == 300.0)
-    check("pedal candidate scale", DID_CANDIDATES["pedalPct"][0][1](bytes([0xFF])) == 100.0)
+    # Scaling math (map entries are (did, nbytes, scaler) — scaler is index 2)
+    check("rpm scale", DID_MAP["rpm"][2](bytes([0x0C, 0x30])) == 780.0)      # 3120 * 0.25
+    check("coolant scale", DID_MAP["coolantTempC"][2](bytes([0x8A])) == 98)  # 138 - 40
+    check("rail candidate scale", DID_CANDIDATES["railPressureBar"][0][2](bytes([0x0B, 0xB8])) == 300.0)
+    check("boost candidate scale", DID_CANDIDATES["boostPressureKpa"][0][2](bytes([0x27, 0x10])) == 300.0)
+    check("pedal candidate scale", DID_CANDIDATES["pedalPct"][0][2](bytes([0xFF])) == 100.0)
+
+    # Corrected J1979 mirror: speed = PID 0x0D, intake temp = PID 0x0F,
+    # and timing-advance (0x0E) must never appear as a boost candidate
+    check("speed did+scale", DID_MAP["speedKph"][0] == 0xF40D
+          and DID_MAP["speedKph"][2](bytes([0x64])) == 100)
+    check("intake did+scale", DID_MAP["intakeTempC"][0] == 0xF40F
+          and DID_MAP["intakeTempC"][2](bytes([0x46])) == 30)  # 70 - 40
+    check("0xF40E not a boost candidate",
+          all(c[0] != 0xF40E for c in DID_CANDIDATES["boostPressureKpa"]))
 
     # Multi-response transport for probe / flash primitives
     class RecordingTransport(FakeTransport):
@@ -438,6 +499,50 @@ def _selftest() -> int:
     check("candidate adoption", adopted is not None
           and adopted[0] == DID_CANDIDATES["railPressureBar"][1][0]
           and attempts[1]["ok"] and attempts[1]["value"] == 300.0, str(attempts))
+
+    # Candidate rejection on wrong width: first candidate answers 1 byte
+    # where 2 are expected -> rejected, second (correct width) adopted
+    client = UdsClient(RecordingTransport([
+        bytes.fromhex("62F484" + "2C"),        # 0xF484 answers with 1 byte
+        bytes.fromhex("62F485" + "0BB8"),      # 0xF485 answers correctly
+    ]))
+    adopted, attempts = probe_candidates(client, "railPressureBar")
+    check("candidate wrong-width rejection", adopted is not None
+          and adopted[0] == 0xF485 and not attempts[0]["ok"]
+          and "wrong width" in attempts[0]["note"], str(attempts))
+
+    # Width guard: a 1-byte answer to the 2-byte rpm DID nulls the channel
+    # instead of raising out of read_live
+    client = UdsClient(RecordingTransport([bytes.fromhex("62F40C" + "0C")]))
+    live = client.read_live({"rpm": DID_MAP["rpm"]})
+    check("read_live width guard", live["rpm"] is None, str(live))
+
+    # Probe rejects a wrong-width answer even though the DID responds
+    client = UdsClient(RecordingTransport([bytes.fromhex("62F40D" + "6400")]))
+    probe = probe_dids(client, {"speedKph": DID_MAP["speedKph"]})
+    check("probe width rejection", not probe[0]["ok"] and "wrong width" in probe[0]["note"],
+          str(probe[0]))
+
+    # Encoder round-trip: value -> DID payload -> decode recovers the value
+    # (this is the path the simulated transport runs on every sample)
+    roundtrip = {
+        "rpm": (780.0, DID_MAP["rpm"][2]),
+        "speedKph": (100, DID_MAP["speedKph"][2]),
+        "coolantTempC": (98, DID_MAP["coolantTempC"][2]),
+        "intakeTempC": (30, DID_MAP["intakeTempC"][2]),
+        "engineLoadPct": (35, DID_MAP["engineLoadPct"][2]),
+        "batteryV": (14.0, DID_MAP["batteryV"][2]),
+        "railPressureBar": (300.0, DID_CANDIDATES["railPressureBar"][0][2]),
+        "boostPressureKpa": (102.5, DID_CANDIDATES["boostPressureKpa"][0][2]),
+        "pedalPct": (12.5, DID_CANDIDATES["pedalPct"][0][2]),
+    }
+    roundtrip_ok = True
+    for chan, (value, decode) in roundtrip.items():
+        back = decode(DID_ENCODERS[chan](value))
+        if abs(back - value) > 1.0:
+            roundtrip_ok = False
+            print(f"    roundtrip FAIL {chan}: {value} -> {back}")
+    check("encoder round-trip (all channels)", roundtrip_ok)
 
     # 0x23 read-memory-by-address encoding
     recorder = RecordingTransport([bytes.fromhex("632002AABBCCDD")])
