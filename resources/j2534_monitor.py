@@ -44,6 +44,13 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 
+# Optional at runtime: simulation only needs the protocol layer to route its
+# samples through the DID codec; without uds.py the sim still runs raw.
+try:
+    import uds as _uds
+except ImportError:
+    _uds = None
+
 LIVE_INTERVAL_S = 0.5
 
 # Alert thresholds reviewed on every live sample (real mode benefits too).
@@ -785,6 +792,9 @@ class SimulatedTransport:
     mode = "simulate"
     device = "Simulated J2534 pass-thru (no hardware)"
 
+    def __init__(self):
+        self._sim_did_map = None
+
     INFO = {
         "protocol": "ISO 15765-4 (CAN 500 kbps)",
         "requestId": "0x7E0",
@@ -833,16 +843,17 @@ class SimulatedTransport:
         return self.INFO
 
     # Canned DID-probe result mirroring uds.DID_MAP/DID_CANDIDATES — every
-    # channel answers in the happy simulated world.
+    # channel answers in the happy simulated world. DIDs follow the corrected
+    # ISO 15031-5 mirror (speed 0x0D, intake temp 0x0F, boost via 0xF4A3).
     SIM_DID_ENTRIES = [
         {"channel": "rpm", "did": "0xF40C", "ok": True, "value": 790, "note": "standard set"},
-        {"channel": "speedKph", "did": "0xF40B", "ok": True, "value": 0, "note": "standard set"},
+        {"channel": "speedKph", "did": "0xF40D", "ok": True, "value": 0, "note": "standard set"},
         {"channel": "coolantTempC", "did": "0xF405", "ok": True, "value": 90, "note": "standard set"},
-        {"channel": "intakeTempC", "did": "0xF40D", "ok": True, "value": 32, "note": "standard set"},
+        {"channel": "intakeTempC", "did": "0xF40F", "ok": True, "value": 32, "note": "standard set"},
         {"channel": "engineLoadPct", "did": "0xF404", "ok": True, "value": 24, "note": "standard set"},
         {"channel": "batteryV", "did": "0xF448", "ok": True, "value": 14.0, "note": "standard set (unconfirmed on DDXC)"},
         {"channel": "railPressureBar", "did": "0xF484", "ok": True, "value": 300, "note": "community EDC17 table (x0.1 bar)"},
-        {"channel": "boostPressureKpa", "did": "0xF40E", "ok": True, "value": 100, "note": "absolute charge pressure (x0.03 kPa)"},
+        {"channel": "boostPressureKpa", "did": "0xF4A3", "ok": True, "value": 100, "note": "charge pressure (x0.03 kPa, community table)"},
         {"channel": "pedalPct", "did": "0xF4A1", "ok": True, "value": 0, "note": "accelerator position (x100/255 %)"},
     ]
 
@@ -892,7 +903,7 @@ class SimulatedTransport:
             return max(lo, min(hi, value))
 
         warmup = min(t / 120.0, 1.0)  # coolant reaches operating temp in ~2 min
-        return {
+        raw = {
             "rpm": round(clamp(790 + 35 * math.sin(t * 0.9) + noise(15), 660, 900)),
             "speedKph": 0,
             "coolantTempC": round(clamp(18 + 74 * warmup + noise(0.4), 12, 95)),
@@ -903,6 +914,28 @@ class SimulatedTransport:
             "batteryV": round(14.0 + 0.2 * math.sin(t * 0.11) + noise(0.03), 2),
             "railPressureBar": round(clamp(290 + 25 * math.sin(t * 0.8) + noise(8), 250, 340)),
         }
+        return self._through_did_codec(raw)
+
+    def _through_did_codec(self, raw: dict) -> dict:
+        """Encode every channel into its DID payload and decode it back
+        through the same scalars the real transport uses. Simulation
+        therefore exercises the DID mapping instead of bypassing it —
+        a wrong DID or width surfaces here first, in the safe world."""
+        if _uds is None:
+            return raw  # protocol layer absent: raw sim values (legacy mode)
+        if self._sim_did_map is None:
+            sim_map = dict(_uds.DID_MAP)
+            for channel in _uds.DID_CANDIDATES:
+                sim_map[channel] = _uds.DID_CANDIDATES[channel][0][:3]
+            self._sim_did_map = sim_map
+        decoded = {}
+        for name, (_did, nbytes, scaler) in self._sim_did_map.items():
+            try:
+                payload = _uds.DID_ENCODERS[name](raw[name])
+                decoded[name] = scaler(payload) if len(payload) == nbytes else None
+            except (KeyError, ValueError, OverflowError):
+                decoded[name] = None
+        return decoded
 
 
 class RealTransport:

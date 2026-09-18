@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Desktop diagnostics and tuning dashboard for the VW 3.0 V6 TDI",
   "main": "./out/main/index.js",
-  "author": "Author",
+  "author": "bushintel77-star",
   "homepage": "https://electron-vite.org",
   "scripts": {
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",

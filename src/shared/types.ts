@@ -1,54 +1,6 @@
 import { electronAPI } from "@electron-toolkit/preload";
 export type GetVersionsFn = () => Promise<typeof electronAPI.process.versions>;
 
-export interface ParserResult {
-  /** True when the Python script exited with code 0. */
-  ok: boolean;
-  /** JSON decoded from the script's stdout, or null when not parseable. */
-  result: unknown;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  durationMs: number;
-}
-
-export type RunParserFn = (input: string, args?: string[]) => Promise<ParserResult>;
-
-/** Shape produced by resources/parser.py. */
-export interface WordCount {
-  word: string;
-  count: number;
-}
-
-export interface LengthBucket {
-  label: string;
-  count: number;
-}
-
-export interface ParserData {
-  lineCount: number;
-  paragraphCount: number;
-  sentenceCount: number;
-  wordCount: number;
-  uniqueWordCount: number;
-  charCount: number;
-  charCountNoSpaces: number;
-  avgWordLength: number;
-  avgWordsPerSentence: number;
-  readingTimeSeconds: number;
-  longestWord: string;
-  topWords: WordCount[];
-  wordLengthBuckets: LengthBucket[];
-  parsedAt: string;
-}
-
-export const isParserData = (value: unknown): value is ParserData =>
-  typeof value === "object" &&
-  value !== null &&
-  "wordCount" in value &&
-  "topWords" in value &&
-  "wordLengthBuckets" in value;
-
 // --- J2534 diagnostic monitor (resources/j2534_monitor.py) ---
 
 export type DiagnosticMode = "live" | "simulate";

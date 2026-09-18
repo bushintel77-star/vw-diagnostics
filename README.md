@@ -111,12 +111,6 @@ unsubscribe();
 
 To go live later: `pip install pyj2534`, connect the pass-thru device, implement `open_real_transport()`, then untick "Simulation mode" before starting a session.
 
-## One-shot Python parser
-
-A simpler one-shot pipeline also exists: `window.context.runParser(input)` spawns `resources/parser.py` once, waits for it to exit, and resolves `{ ok, result, stdout, stderr, exitCode, durationMs }`. See the `ParserData` type in `src/shared/types.ts`. Useful for batch-style scripts that don't stream.
-
-The script is bundled as an unpacked asset, so it also works in packaged builds (Python 3 must be installed on the target machine, or bundled with the app).
-
 ## Packaging & distribution
 
 Build the Windows installer:
