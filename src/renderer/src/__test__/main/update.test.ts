@@ -162,3 +162,58 @@ describe("checkForUpdate", () => {
     }
   });
 });
+
+describe("release URL allowlist", () => {
+  beforeEach(() => {
+    delete process.env.VWD_FORCE_UPDATE_BANNER;
+    electronState.isPackaged = true;
+    electronState.version = "1.0.0";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A hostile html_url must fail the check AND leave nothing stored for the
+  // click handler — each case re-imports the module for clean state.
+  test.each([
+    "file:///C:/Windows/System32/calc.exe",
+    "https://evil.example.com/x",
+    "http://github.com/releases/x", // https only
+    "not-a-url",
+  ])("rejects %s", async (htmlUrl) => {
+    vi.resetModules();
+    const { checkForUpdate: check, openUpdateDownload: open } = await import(
+      "../../../../main/lib/update"
+    );
+    const { shell } = await import("electron");
+    const openExternal = vi.mocked(shell.openExternal);
+    openExternal.mockClear();
+
+    stubFetch(() =>
+      releaseJson({ tag_name: "v9.9.9", html_url: htmlUrl })
+    );
+    const result = await check();
+    expect(result.status).toBe("unknown");
+    expect(result.status).not.toBe("current");
+    await open();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test("legitimate https github.com URL is stored and opened", async () => {
+    vi.resetModules();
+    const { checkForUpdate: check, openUpdateDownload: open } = await import(
+      "../../../../main/lib/update"
+    );
+    const { shell } = await import("electron");
+    const openExternal = vi.mocked(shell.openExternal);
+    openExternal.mockClear();
+
+    const url = "https://github.com/bushintel77-star/vw-diagnostics/releases/tag/v9.9.9";
+    stubFetch(() => releaseJson({ tag_name: "v9.9.9", html_url: url }));
+    const result = await check();
+    expect(result.status).toBe("available");
+    await open();
+    expect(openExternal).toHaveBeenCalledWith(url);
+  });
+});

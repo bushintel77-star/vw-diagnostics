@@ -45,7 +45,11 @@ const UpdateBanner = () => {
         <Button
           size="sm"
           className="h-8"
-          onClick={() => void window.context.openUpdateDownload()}
+          onClick={() => {
+            if (typeof window.context?.openUpdateDownload === "function") {
+              void window.context.openUpdateDownload();
+            }
+          }}
         >
           <Download className="size-3.5" />
           Download {result.latestVersion}

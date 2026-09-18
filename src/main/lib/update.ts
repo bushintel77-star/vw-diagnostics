@@ -18,6 +18,17 @@ const CHECK_TIMEOUT_MS = 5000;
 // resolved itself — the renderer is never trusted to supply one.
 let lastReleaseUrl: string | null = null;
 
+/** openExternal on Windows will launch file: and arbitrary protocol
+ *  handlers, so only https github.com URLs are ever acceptable. */
+const isAllowedReleaseUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "github.com";
+  } catch {
+    return false;
+  }
+};
+
 /** Strict semver compare: "v" prefix tolerated, components compared
  *  numerically (1.10.0 > 1.9.0). Unparseable input fails closed (false). */
 export function isNewerVersion(latest: string, current: string): boolean {
@@ -87,6 +98,13 @@ export const checkForUpdate: CheckForUpdateFn = async () => {
         reason: "unexpected release payload",
       };
     }
+    if (!isAllowedReleaseUrl(releaseUrl)) {
+      return {
+        status: "unknown",
+        currentVersion,
+        reason: "unexpected release URL",
+      };
+    }
     if (isNewerVersion(tag, currentVersion)) {
       lastReleaseUrl = releaseUrl;
       return {
@@ -112,7 +130,9 @@ export const checkForUpdate: CheckForUpdateFn = async () => {
  *  check. Takes no URL argument — an arbitrary renderer-supplied string to
  *  shell.openExternal would turn renderer injection into "open anything". */
 export const openUpdateDownload = (): void => {
-  if (lastReleaseUrl) {
+  // Re-validate at the point of use so the guard holds even if this module
+  // state is ever set from another path later.
+  if (lastReleaseUrl && isAllowedReleaseUrl(lastReleaseUrl)) {
     void shell.openExternal(lastReleaseUrl);
   }
 };
