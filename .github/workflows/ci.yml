@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Typecheck, tests and the vite build never launch Electron — skip the
+      # ~100 MB binary download (electron's install script honours this).
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx vitest run
+      - run: npm run build
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python resources/uds.py --selftest
+      # Simulate mode is stdlib-only; pyj2534 is deliberately NOT installed so
+      # CI exercises the import-guard path.
+      - name: Monitor simulate-mode smoke test
+        run: python resources/j2534_monitor.py --simulate --duration 5 > monitor-events.ndjson
+      - name: Assert event stream is well-formed NDJSON
+        run: |
+          python - <<'EOF'
+          import json
+          lines = [l for l in open("monitor-events.ndjson") if l.strip()]
+          assert lines, "monitor emitted no events"
+          for i, line in enumerate(lines, 1):
+              json.loads(line)
+          print(f"ok: {len(lines)} events, every non-empty line is valid JSON")
+          EOF
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Audit production dependencies
+        # npm audit reads package-lock.json and queries the registry — it does
+        # not need node_modules, so no npm ci (which would also pull the ~100 MB
+        # Electron binary) is run here.
+        # The production tree is clean today and this gate keeps it that way.
+        # Caveat: --omit=dev understates risk for this app specifically, because
+        # the renderer is bundled from devDependencies; the full tree still has
+        # advisories whose only fix is `npm audit fix --force`, which would move
+        # electron-builder/vite/vitest majors — deliberately deferred to a
+        # later stage. The audit level is deliberately left at high.
+        run: npm audit --omit=dev --audit-level=high
