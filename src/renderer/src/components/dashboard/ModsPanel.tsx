@@ -62,18 +62,19 @@ export const ScopeCard = ({ mods }: { mods: DiagnosticModsEvent | null }) => (
           Never touched
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {(mods?.scope.blocked ?? ["Steering", "Brakes", "Airbag/SRS", "ADAS", "All other modules"]).map(
-            (module) => (
-              <Badge
-                key={module.name}
-                variant="outline"
-                className="font-normal text-muted-foreground"
-              >
-                <span className="mr-1">🔒</span>
-                {module.name}
-              </Badge>
-            )
-          )}
+          {(mods?.scope.blocked?.map((module) => module.name) ??
+            ["Steering", "Brakes", "Airbag/SRS", "ADAS", "All other modules"]).map(
+              (name) => (
+                <Badge
+                  key={name}
+                  variant="outline"
+                  className="font-normal text-muted-foreground"
+                >
+                  <span className="mr-1">🔒</span>
+                  {name}
+                </Badge>
+              )
+            )}
         </div>
       </div>
       <p className="text-[10px] leading-snug text-muted-foreground">
