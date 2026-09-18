@@ -132,6 +132,15 @@ async function tryLiveBridge(): Promise<boolean> {
         listeners.delete(listener);
       };
     },
+    // Update checks are a packaged-app concern; the browser bridge reports
+    // "unknown" so the banner stays silent (as designed for failures).
+    checkForUpdate: () =>
+      Promise.resolve({
+        status: "unknown" as const,
+        currentVersion: "web",
+        reason: "browser session",
+      }),
+    openUpdateDownload: () => Promise.resolve(),
   };
 
   // Viewer convenience: start a simulated-transport session on the real monitor.

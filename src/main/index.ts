@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain } from "electron";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import icon from "../../resources/icon.png?asset";
-import { getVersions, triggerIPC, startDiagnostic, stopDiagnostic, sendDiagnosticCommand } from "@/lib";
+import { getVersions, triggerIPC, startDiagnostic, stopDiagnostic, sendDiagnosticCommand, checkForUpdate, openUpdateDownload } from "@/lib";
 import { GetVersionsFn } from "@shared/types";
 
 function createWindow(): void {
@@ -78,6 +78,10 @@ app.whenReady().then(() => {
   ipcMain.handle("diagnostic:command", (_, command) =>
     sendDiagnosticCommand(command)
   );
+
+  ipcMain.handle("update:check", () => checkForUpdate());
+
+  ipcMain.handle("update:openDownload", () => openUpdateDownload());
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common

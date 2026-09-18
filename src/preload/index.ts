@@ -24,6 +24,10 @@ try {
     stopDiagnostic: () => ipcRenderer.invoke("diagnostic:stop"),
     sendDiagnosticCommand: (command: DiagnosticCommand) =>
       ipcRenderer.invoke("diagnostic:command", command),
+    checkForUpdate: () => ipcRenderer.invoke("update:check"),
+    // No URL argument crosses the bridge: the main process opens only the
+    // release URL it resolved itself in the last check.
+    openUpdateDownload: () => ipcRenderer.invoke("update:openDownload"),
     onDiagnosticEvent: (
       listener: (event: DiagnosticEvent) => void
     ): (() => void) => {

@@ -423,3 +423,21 @@ export type DiagnosticEventListener = (event: DiagnosticEvent) => void;
 export type OnDiagnosticEventFn = (
   listener: DiagnosticEventListener
 ) => () => void;
+
+// --- Update notice (GitHub releases check, main process only) ---
+//
+// Discriminated union: a failed check must never render as "up to date".
+export type UpdateCheckResult =
+  | { status: "current"; currentVersion: string }
+  | {
+      status: "available";
+      currentVersion: string;
+      latestVersion: string;
+      releaseUrl: string;
+      publishedAt: string;
+    }
+  | { status: "unknown"; currentVersion: string; reason: string };
+
+export type CheckForUpdateFn = () => Promise<UpdateCheckResult>;
+
+export type OpenUpdateDownloadFn = () => Promise<void>;

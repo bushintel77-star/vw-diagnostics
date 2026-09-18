@@ -26,6 +26,7 @@ import StripChart from "@/components/dashboard/StripChart";
 import PullChart from "@/components/dashboard/PullChart";
 import DeletionPanel from "@/components/dashboard/DeletionPanel";
 import ModsPanel, { ScopeCard } from "@/components/dashboard/ModsPanel";
+import UpdateBanner from "@/components/dashboard/UpdateBanner";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
 import { isDemoMode } from "@/web/demoBridge";
@@ -391,6 +392,9 @@ const App = () => {
 
   return (
     <div className="container flex min-h-dvh flex-col gap-6 py-8">
+      {/* update notice — renders only when a newer release exists */}
+      <UpdateBanner />
+
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">

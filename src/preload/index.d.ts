@@ -1,5 +1,7 @@
 import {
+  CheckForUpdateFn,
   GetVersionsFn,
+  OpenUpdateDownloadFn,
   SendDiagnosticCommandFn,
   StartDiagnosticFn,
   StopDiagnosticFn,
@@ -16,6 +18,8 @@ declare global {
       stopDiagnostic: StopDiagnosticFn;
       sendDiagnosticCommand: SendDiagnosticCommandFn;
       onDiagnosticEvent: OnDiagnosticEventFn;
+      checkForUpdate: CheckForUpdateFn;
+      openUpdateDownload: OpenUpdateDownloadFn;
     };
   }
 }

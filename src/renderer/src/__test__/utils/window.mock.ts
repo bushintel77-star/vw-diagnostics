@@ -272,6 +272,14 @@ const context = Object.defineProperty(window, "context", {
         MOCK_SESSION.forEach(listener);
         return () => {};
       }),
+    checkForUpdate: vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        status: "unknown",
+        currentVersion: "0.0.0",
+        reason: "test stub",
+      })
+    ),
+    openUpdateDownload: vi.fn().mockImplementation(() => Promise.resolve()),
   },
 });
 

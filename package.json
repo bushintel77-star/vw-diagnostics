@@ -1,6 +1,6 @@
 {
   "name": "vw-diagnostics",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Desktop diagnostics and tuning dashboard for the VW 3.0 V6 TDI",
   "main": "./out/main/index.js",
   "author": "bushintel77-star",

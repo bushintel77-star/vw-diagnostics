@@ -542,6 +542,15 @@ export const ensureDemoContext = (): void => {
     stopDiagnostic: bridge.stopDiagnostic,
     sendDiagnosticCommand: bridge.sendDiagnosticCommand,
     onDiagnosticEvent: bridge.onDiagnosticEvent,
+    // Update checks are a packaged-app concern; the browser demo reports
+    // "unknown" so the banner stays silent (as designed for failures).
+    checkForUpdate: () =>
+      Promise.resolve({
+        status: "unknown" as const,
+        currentVersion: "demo",
+        reason: "browser demo",
+      }),
+    openUpdateDownload: () => Promise.resolve(),
   };
   // Viewer convenience: start a simulated session right away.
   window.setTimeout(() => void bridge.startDiagnostic({ simulate: true }), 400);

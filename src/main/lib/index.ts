@@ -11,6 +11,8 @@ export {
   sendDiagnosticCommand,
 } from "./diagnostic";
 
+export { checkForUpdate, openUpdateDownload } from "./update";
+
 export const getVersions: GetVersionsFn = async () => {
   const versions = electronAPI.process.versions;
   return versions;
