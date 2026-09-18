@@ -1,3 +1,6 @@
+// Inter, bundled locally via Fontsource — no Google Fonts request at runtime.
+import "@fontsource-variable/inter";
+
 import "./assets/index.css";
 
 import React from "react";
