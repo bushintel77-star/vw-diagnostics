@@ -187,7 +187,7 @@ const App = () => {
         case "verification":
           setVerification(event);
           pushLog(
-            `Sign-off verification ${
+            `Post-flash health check ${
               { pass: "PASSED", fail: "FAILED", inconclusive: "NOT VERIFIED" }[
                 event.verdict
               ]
@@ -346,7 +346,7 @@ const App = () => {
       appliedMods: mods?.active ?? [],
       codedOutComponents: deletions?.active ?? [],
       moduleScope: mods?.scope ?? null,
-      signOffVerification: verification,
+      postFlashHealthCheck: verification,
       liveSnapshot: live,
       trends: history,
       eventLog: log,
@@ -550,14 +550,14 @@ const App = () => {
               disabled={!running}
               onClick={handleVerify}
             >
-              Verify & Sign Off
+              Run health check
             </Button>
           </CardContent>
         </Card>
         <ScopeCard mods={mods} />
       </div>
 
-      {/* sign-off verification result */}
+      {/* post-flash health check result */}
       {verification && <VerificationCard verification={verification} />}
 
       {/* live data */}

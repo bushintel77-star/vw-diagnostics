@@ -209,7 +209,7 @@ export interface DiagnosticModsEvent {
   scope: ModuleScope;
 }
 
-/** One check of the post-work sign-off routine. */
+/** One check of the post-flash health-check routine. */
 export interface VerificationItem {
   check: string;
   status: "pass" | "fail" | "skipped";
@@ -229,9 +229,10 @@ export interface FactoryEnvelope {
 
 export type DutyProfile = "standard" | "no_tow";
 
-/** Sign-off outcome: "pass" means applied work was verified against ECU
- * evidence this session; "inconclusive" means nothing substantive was
- * evaluated (the normal state — this app never writes); "fail" means a
+/** Health-check outcome: "pass" means at least one check passed on real
+ * ECU evidence read this session (a DTC re-read, live channels, coolant,
+ * the stream) and nothing failed; "inconclusive" means nothing was
+ * evaluated on real evidence — never rendered as success; "fail" means a
  * check actually failed. Never collapse to a boolean — "not verified"
  * is not a pass. */
 export type VerificationVerdict = "pass" | "fail" | "inconclusive";

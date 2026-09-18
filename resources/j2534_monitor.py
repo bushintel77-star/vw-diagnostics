@@ -516,16 +516,21 @@ FACTORY_ENVELOPE = {
 def run_verification(transport, active_deletions: set, active_mods: set,
                      tracker: StreamTracker, session: dict,
                      duty_profile: str = "standard") -> dict:
-    """Post-work sign-off: the workshop 'scan after work' plus read-back
-    verification, automated. Every input is re-read from the ECU at this
-    moment (DTCs via 0x19, channels via 0x22). Under the test fixture it
-    grades the fixture's state and says so via `source`."""
+    """Post-flash health check: the workshop 'scan after work', automated.
+    Every input is re-read from the vehicle at this moment (DTCs via 0x19,
+    channels via 0x22). Under the test fixture it grades the fixture's
+    state and says so via `source`."""
     profile = DUTY_PROFILES.get(duty_profile, DUTY_PROFILES["standard"])
     source = "ecu" if transport.mode == "live" else "simulated"
 
-    codes = transport.read_dtcs()  # live: fresh 0x19 read right now
+    # A failed DTC read means no evidence — the check skips, never passes.
+    try:
+        codes = transport.read_dtcs()  # live: fresh 0x19 read right now
+    except Exception as exc:
+        codes = None
+        dtc_error = str(exc)
     baseline = session.get("baseline_codes", set())
-    current = {c["code"] for c in codes}
+    current = {c["code"] for c in codes} if codes is not None else None
 
     suppressed: set = set()
     for entry in DELETION_CATALOG:
@@ -533,24 +538,43 @@ def run_verification(transport, active_deletions: set, active_mods: set,
             suppressed.update(entry["clearsCodes"])
 
     items = []
+    substantive = False  # a check passed on data actually read this session
 
-    unexpected = sorted(current - baseline)
-    items.append({
-        "check": "No new fault codes introduced",
-        "status": "fail" if unexpected else "pass",
-        "detail": f"new since session start: {', '.join(unexpected)}" if unexpected
-        else f"{len(codes)} known code(s), none new this session",
-    })
+    if codes is None:
+        items.append({
+            "check": "No new fault codes introduced",
+            "status": "skipped",
+            "detail": f"DTC read failed — nothing evaluated ({dtc_error})",
+        })
+    else:
+        unexpected = sorted(current - baseline)
+        items.append({
+            "check": "No new fault codes introduced",
+            "status": "fail" if unexpected else "pass",
+            "detail": f"new since session start: {', '.join(unexpected)}" if unexpected
+            else f"{len(codes)} known code(s), none new this session",
+        })
+        if not unexpected:
+            substantive = True  # a fresh 0x19 read is real ECU evidence
 
-    leaking = sorted(suppressed & current)
-    items.append({
-        "check": "Coded-out codes suppressed",
-        # No active deletes means nothing was checked — skip, not a pass.
-        "status": "fail" if leaking else ("pass" if suppressed else "skipped"),
-        "detail": f"still reporting: {', '.join(leaking)}" if leaking
-        else f"{len(suppressed)} code(s) suppressed by active deletes" if suppressed
-        else "no deletes active — nothing to check",
-    })
+    if current is None and suppressed:
+        items.append({
+            "check": "Coded-out codes suppressed",
+            "status": "skipped",
+            "detail": "DTC read failed — cannot confirm suppression",
+        })
+    else:
+        leaking = sorted(suppressed & (current or set()))
+        items.append({
+            "check": "Coded-out codes suppressed",
+            # No active deletes means nothing was checked — skip, not a pass.
+            "status": "fail" if leaking else ("pass" if suppressed else "skipped"),
+            "detail": f"still reporting: {', '.join(leaking)}" if leaking
+            else f"{len(suppressed)} code(s) suppressed by active deletes" if suppressed
+            else "no deletes active — nothing to check",
+        })
+        if suppressed and not leaking:
+            substantive = True  # ECU read confirms the masked codes are gone
 
     # Live mode re-reads the channels straight from the ECU instead of
     # trusting the last streamed sample.
@@ -569,6 +593,8 @@ def run_verification(transport, active_deletions: set, active_mods: set,
         else "all channels plausible" if values
         else "no live data received — nothing evaluated",
     })
+    if values and not breaches:
+        substantive = True  # live channels re-read and evaluated
 
     coolant = values.get("coolantTempC") if values else None
     items.append({
@@ -578,6 +604,8 @@ def run_verification(transport, active_deletions: set, active_mods: set,
         "detail": f"{profile['label']}: {profile['note']}"
         + (f" Now: {coolant} °C." if coolant is not None else " No coolant reading."),
     })
+    if coolant is not None and coolant <= profile["coolantMaxC"]:
+        substantive = True  # a real reading inside the duty limit
 
     items.append({
         "check": "No rejected implausible samples",
@@ -587,6 +615,8 @@ def run_verification(transport, active_deletions: set, active_mods: set,
         + (f" on {', '.join(sorted(tracker.rejected_channels))}" if tracker.rejected_channels else "")
         + ("" if tracker.seen else " — stream produced no samples"),
     })
+    if tracker.seen and tracker.rejected <= 5:
+        substantive = True  # the live stream actually ran and was evaluated
 
     items.append({
         "check": "Applied state read-back",
@@ -596,8 +626,8 @@ def run_verification(transport, active_deletions: set, active_mods: set,
                    if (active_mods or active_deletions) else "stock coding — nothing applied"),
     })
 
-    # Unambiguous scope statement: this app never writes, so a passing
-    # sign-off must not read as "verified tuned vehicle".
+    # Unambiguous scope statement: this app never writes, so the verdict
+    # confirms vehicle health — never that a tune was applied.
     applied = len(active_mods) + len(active_deletions)
     items.append({
         "check": "Calibration changes applied this session",
@@ -617,13 +647,12 @@ def run_verification(transport, active_deletions: set, active_mods: set,
     envelope["peakTorqueNm"] = None
     envelope["sustainedTorqueNm"] = None
 
-    # Three-state verdict — sign-off verifies the session's applied work
-    # against ECU evidence. This app never writes, so with nothing applied
-    # there is no work to verify: health-scan passes with no work behind
-    # them are not a sign-off. "pass" requires applied work evaluated this
-    # session; otherwise the honest verdict is inconclusive, never PASSED.
+    # Three-state verdict — a post-flash health check, not a sign-off.
+    # "pass" requires at least one check to have passed on real ECU
+    # evidence read this session (a DTC re-read, live channels, coolant,
+    # the stream). With no session data every check skips and the honest
+    # verdict is inconclusive — never PASSED on nothing.
     fails = any(item["status"] == "fail" for item in items)
-    substantive = applied > 0 and any(item["status"] == "pass" for item in items)
     verdict = "fail" if fails else ("pass" if substantive else "inconclusive")
     return {
         "type": "verification",
@@ -922,7 +951,7 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
         passed_n = sum(1 for i in verification["items"] if i["status"] == "pass")
         failed_n = sum(1 for i in verification["items"] if i["status"] == "fail")
         skipped_n = sum(1 for i in verification["items"] if i["status"] == "skipped")
-        emit(log(f"Sign-off verification {verdict_label} ({origin}, {verification['dutyProfile']}) — "
+        emit(log(f"Post-flash health check {verdict_label} ({origin}, {verification['dutyProfile']}) — "
                  f"{passed_n} passed, {failed_n} failed, {skipped_n} skipped "
                  f"of {len(verification['items'])} checks."))
         emit(verification)
@@ -1215,9 +1244,11 @@ class _NonWritableProbe:
     )
 
     def __init__(self, dtcs: list | None = None):
-        self._dtcs = dtcs or []
+        self._dtcs = dtcs
 
     def read_dtcs(self) -> list:
+        if self._dtcs is None:
+            raise RuntimeError("probe: no DTC read this session")
         return list(self._dtcs)
 
     def sample(self, _t: float) -> dict:
@@ -1278,15 +1309,27 @@ def _selftest_writes(fixture) -> int:
         checks.append(("writable transport applies the mod", "pedal_map" in f_mods))
 
         captured.clear()
-        # Sign-off must state plainly that this app applied nothing, and
-        # must not announce PASSED for a session that verified no work.
+        # Health check must state plainly that this app applied nothing,
+        # and must not announce PASSED for a session that read nothing.
         verdict = run_verification(probe, set(), set(), StreamTracker(warmup=4), session)
         item = next((i for i in verdict["items"]
                      if i["check"] == "Calibration changes applied this session"), None)
         checks.append(("verification marks no-apply explicitly",
                        item is not None and item["status"] == "skipped"))
-        checks.append(("no applied work + no fails is inconclusive, not pass",
-                       verdict["verdict"] == "inconclusive"))
+        checks.append(("no session data is inconclusive — nothing went green",
+                       verdict["verdict"] == "inconclusive"
+                       and all(i["status"] == "skipped" for i in verdict["items"])))
+
+        # Real ECU evidence with nothing applied still verifies health —
+        # this is the post-flash confirmation path the user relies on.
+        healthy_tracker = StreamTracker(warmup=4)
+        healthy_tracker.update(fixture.sample(0))
+        healthy_session = {"baseline_codes": {d["code"] for d in fixture.read_dtcs()},
+                           "last_values": fixture.sample(0)}
+        healthy = run_verification(fixture, set(), set(),
+                                   healthy_tracker, healthy_session)
+        checks.append(("pass on real evidence with nothing applied",
+                       healthy["verdict"] == "pass"))
 
         # A fail always wins over skips.
         failing = run_verification(

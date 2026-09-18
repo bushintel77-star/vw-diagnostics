@@ -279,43 +279,53 @@ describe("Testing the VW diagnostic dashboard", () => {
     );
   });
 
-  test("renders the sign-off verification checklist", () => {
-    expect(screen.getByText("Sign-off Verification")).toBeVisible();
-    // Nothing was applied by this app — the verdict is inconclusive, and
-    // "PASSED" must not appear: it would read as a verified tune.
-    expect(screen.getByText("NOT VERIFIED")).toBeVisible();
-    expect(screen.queryByText(/^PASSED$/)).toBeNull();
-    expect(screen.queryByText(/^FAILED$/)).toBeNull();
+  test("renders the post-flash health check card — no sign-off wording", () => {
+    // It is a health check, not a sign-off: the rename must be complete.
+    expect(screen.getByText("Post-Flash Health Check")).toBeVisible();
+    expect(screen.queryByText(/sign.?off/i)).toBeNull();
+    // Real session evidence with nothing applied → PASSED (vehicle health,
+    // never a verified tune).
+    expect(screen.getByText(/^PASSED$/)).toBeVisible();
+    expect(screen.queryByText("NOT VERIFIED")).toBeNull();
     expect(screen.getByText("No new fault codes introduced")).toBeVisible();
     expect(screen.getByText(/Applied state read-back/i)).toBeVisible();
   });
 
-  test("a pass verdict renders PASSED and a fail verdict renders FAILED", async () => {
+  test("inconclusive renders NOT VERIFIED and fail renders FAILED", async () => {
     const base = {
       type: "verification" as const,
       source: "ecu" as const,
       dutyProfile: "Standard (tow-capable)",
       items: [
-        { check: "No new fault codes introduced", status: "pass" as const, detail: "0 known code(s), none new this session" },
+        { check: "No new fault codes introduced", status: "skipped" as const, detail: "DTC read failed — nothing evaluated" },
       ],
       timestamp: "2026-08-15T03:00:02.000Z",
     };
 
     await act(async () => {
-      dashboardListener()({ ...base, verdict: "fail" });
+      dashboardListener()({ ...base, verdict: "inconclusive", timestamp: "2026-08-15T03:00:03.000Z" });
+    });
+    expect(screen.getByText("NOT VERIFIED")).toBeVisible();
+    expect(screen.queryByText(/^PASSED$/)).toBeNull();
+
+    await act(async () => {
+      dashboardListener()({ ...base, verdict: "fail", timestamp: "2026-08-15T03:00:04.000Z" });
     });
     expect(screen.getByText(/^FAILED$/)).toBeVisible();
 
+    // Log keys are time+message — cross a second boundary so the PASSED
+    // line from this push can't collide with the replayed mock event's.
     await act(async () => {
-      dashboardListener()({ ...base, verdict: "pass" });
+      await new Promise((r) => setTimeout(r, 1100));
+      dashboardListener()({ ...base, verdict: "pass", timestamp: "2026-08-15T03:00:05.000Z" });
     });
     expect(screen.getByText(/^PASSED$/)).toBeVisible();
     expect(screen.queryByText("NOT VERIFIED")).toBeNull();
   });
 
-  test("Verify & Sign Off sends the command once a session is running", async () => {
+  test("Run health check sends the command once a session is running", async () => {
     expect(
-      screen.getByRole("button", { name: /verify & sign off/i })
+      screen.getByRole("button", { name: /run health check/i })
     ).toBeDisabled();
 
     await act(async () => {
@@ -323,7 +333,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /verify & sign off/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run health check/i }));
     });
 
     await waitFor(() => {
@@ -344,7 +354,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /verify & sign off/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run health check/i }));
     });
 
     await waitFor(() => {

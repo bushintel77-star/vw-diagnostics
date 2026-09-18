@@ -47,7 +47,7 @@ const VerificationCard = ({
         ) : (
           <ShieldAlert className="size-4 text-muted-foreground" />
         )}
-        Sign-off Verification
+        Post-Flash Health Check
         <Badge
           variant={
             verification.verdict === "pass"
@@ -79,8 +79,9 @@ const VerificationCard = ({
         </Badge>
       </CardTitle>
       <CardDescription>
-        Post-work routine: scan for new codes, read-back applied state,
-        channel limits, sample plausibility
+        Post-flash scan: new fault codes, channel limits, coolant,
+        sample plausibility — confirms the vehicle reads healthy; this
+        app does not write or verify tunes
         {verification.dutyProfile ? ` · duty: ${verification.dutyProfile}` : ""}
       </CardDescription>
     </CardHeader>

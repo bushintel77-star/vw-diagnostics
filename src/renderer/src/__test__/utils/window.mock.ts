@@ -175,9 +175,9 @@ const MOCK_SESSION: DiagnosticEvent[] = [
   },
   {
     type: "verification",
-    // Nothing was applied by this app — the honest verdict is inconclusive,
-    // never "verified".
-    verdict: "inconclusive",
+    // Real session evidence (DTC re-read, live channels, coolant) with
+    // nothing applied — the health check passes; it never claims a tune.
+    verdict: "pass",
     source: "ecu",
     dutyProfile: "Standard (tow-capable)",
     envelope: {
