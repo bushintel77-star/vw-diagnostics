@@ -10,6 +10,12 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
+    // vitest globals (describe/it/expect) for the __test__ suite — replaces the
+    // ambient globals @types/jest used to supply
+    "types": [
+      "node",
+      "vitest/globals"
+    ],
     "baseUrl": ".",
     "paths": {
       "@/*": [
