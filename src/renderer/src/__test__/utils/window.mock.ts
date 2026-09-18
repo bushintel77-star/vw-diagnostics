@@ -108,7 +108,8 @@ const MOCK_SESSION: DiagnosticEvent[] = [
           "CONFLICT — the ECU uses the ASV to throttle intake air for DPF regeneration heat. Keep the ASV while the DPF stays.",
       },
     ],
-    active: ["start_stop_memory"],
+    // Writes are refused by the monitor — nothing is ever active.
+    active: [],
   },
   {
     type: "mods",
@@ -138,7 +139,8 @@ const MOCK_SESSION: DiagnosticEvent[] = [
         description: "Raises the fuel cut point from ~4800 to ~5100 rpm.",
       },
     ],
-    active: ["stage1"],
+    // Writes are refused by the monitor — nothing is ever active.
+    active: [],
     scope: {
       allowed: [
         { name: "Engine", address: "0x7E0", reason: "performance calibration" },
@@ -188,7 +190,8 @@ const MOCK_SESSION: DiagnosticEvent[] = [
       { check: "Coded-out codes suppressed", status: "pass", detail: "no deletes active" },
       { check: "Live channels within limits", status: "pass", detail: "all channels plausible" },
       { check: "Torque within factory envelope", status: "skipped", detail: "no dyno pull this session — run one before sign-off" },
-      { check: "Applied state read-back", status: "pass", detail: "1 mod(s) + 0 delete(s) active and consistent" },
+      { check: "Applied state read-back", status: "pass", detail: "stock coding — nothing applied" },
+      { check: "Calibration changes applied this session", status: "skipped", detail: "none — this app does not write to the ECU; changes are applied by bench flashing and verified here" },
     ],
     timestamp: "2026-08-15T03:00:02.000Z",
   },

@@ -73,11 +73,16 @@ const DeletionPanel = ({
           )}
         </CardTitle>
         <CardDescription>
-          Code components out via ECU adaptation/coding — every change is
-          reversible with Restore
+          Component-deletion planning — applied by bench flashing; this app
+          verifies the result
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <p className="rounded-md border border-chart-4/40 bg-chart-4/10 px-3 py-2 text-xs leading-snug text-muted-foreground">
+          Deletions are applied by bench flashing the ECU (boot mode) — this
+          app plans the change and verifies it afterwards; it does not write
+          to the ECU. Delete/restore controls are disabled.
+        </p>
         {catalog.length === 0 && (
           <p className="text-sm text-muted-foreground">
             {running
@@ -181,7 +186,8 @@ const DeletionPanel = ({
                             size="sm"
                             variant="outline"
                             className="h-7 w-full text-xs"
-                            disabled={!running}
+                            disabled
+                            title="Applied by bench flashing — this app does not write to the ECU"
                             onClick={() => onRestore(item.id)}
                           >
                             <RotateCcw className="size-3.5" />
@@ -192,7 +198,8 @@ const DeletionPanel = ({
                             size="sm"
                             variant={confirming ? "destructive" : "outline"}
                             className="h-7 w-full text-xs"
-                            disabled={!running}
+                            disabled
+                            title="Applied by bench flashing — this app does not write to the ECU"
                             onClick={() => handleClick(item)}
                           >
                             {confirming

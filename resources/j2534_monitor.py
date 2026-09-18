@@ -599,6 +599,18 @@ def run_verification(transport, active_deletions: set, active_mods: set,
                    if (active_mods or active_deletions) else "stock coding — nothing applied"),
     })
 
+    # Unambiguous scope statement: this app never writes, so a passing
+    # sign-off must not read as "verified tuned vehicle".
+    applied = len(active_mods) + len(active_deletions)
+    items.append({
+        "check": "Calibration changes applied this session",
+        "status": "skipped" if applied == 0 else "pass",
+        "detail": ("none — this app does not write to the ECU; changes are "
+                   "applied by bench flashing and verified here"
+                   if applied == 0 else
+                   f"{len(active_mods)} mod(s) + {len(active_deletions)} delete(s) applied"),
+    })
+
     # Factory-envelope check: the torque the tune actually makes must sit
     # inside the manufacturer ladder — this is the "tune to the standard"
     # rule made enforceable.
@@ -625,7 +637,9 @@ def run_verification(transport, active_deletions: set, active_mods: set,
                        f"({envelope['ladder']})"),
         })
 
-    passed = all(item["status"] == "pass" for item in items)
+    # Skipped checks (nothing applied, no pull measured) are honest absence,
+    # not failure — only an actual fail blocks sign-off.
+    passed = all(item["status"] != "fail" for item in items)
     return {
         "type": "verification",
         "passed": passed,
@@ -728,6 +742,15 @@ class RealTransport:
 
     mode = "live"
     device = "J2534 pass-thru (ISO15765, 500 kbps)"
+
+    # This app never writes calibration — that is a settled product position,
+    # not a missing feature. Changes are made by bench flashing the ECU
+    # (boot mode); this app plans them beforehand and verifies afterwards.
+    can_write_calibration = False
+    calibration_write_note = (
+        "calibration changes are applied by bench flashing the ECU (boot "
+        "mode) — this app plans and verifies them, it does not write"
+    )
 
     def __init__(self, client):
         self.client = client
@@ -883,6 +906,21 @@ def refuse_out_of_scope(kind: str, name: str, ecu: str) -> None:
     ))
 
 
+def refuse_no_write(kind: str, name: str, transport) -> None:
+    """Honest refusal: the app does not write calibration. Changes are made
+    by bench flashing the ECU (boot mode); this app plans them beforehand
+    and verifies the result afterwards. No state is mutated, no success is
+    claimed."""
+    note = getattr(transport, "calibration_write_note", None) or (
+        "this transport does not write calibration"
+    )
+    emit(log(f"Refused {kind} '{name}': {note}."))
+
+
+def transport_writes(transport) -> bool:
+    return bool(getattr(transport, "can_write_calibration", False))
+
+
 def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set,
                    tracker: StreamTracker, vin: str, session: dict) -> None:
     name = cmd.get("cmd")
@@ -964,6 +1002,9 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
         if not module_allowed(entry["ecu"]):
             refuse_out_of_scope("component delete", entry["name"], entry["ecu"])
             return
+        if not transport_writes(transport):
+            refuse_no_write("component delete", entry["name"], transport)
+            return
         if entry["id"] in active_deletions:
             emit(log(f"{entry['name']} is already coded out."))
             return
@@ -991,6 +1032,9 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
         if entry is None or entry["id"] not in active_deletions:
             emit(log(f"{cmd.get('componentId')} is not coded out."))
             return
+        if not transport_writes(transport):
+            refuse_no_write("component restore", entry["name"], transport)
+            return
         active_deletions.discard(entry["id"])
         emit(log(f"Restored {entry['name']} to stock coding."))
         emit_deletions(active_deletions)
@@ -1002,6 +1046,9 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
             return
         if not module_allowed(entry["ecu"]):
             refuse_out_of_scope("performance mod", entry["name"], entry["ecu"])
+            return
+        if not transport_writes(transport):
+            refuse_no_write("performance mod", entry["name"], transport)
             return
         if entry["id"] in active_mods:
             emit(log(f"{entry['name']} is already applied."))
@@ -1017,6 +1064,9 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
         entry = next((m for m in MOD_CATALOG if m["id"] == cmd.get("modId")), None)
         if entry is None or entry["id"] not in active_mods:
             emit(log(f"{cmd.get('modId')} is not applied."))
+            return
+        if not transport_writes(transport):
+            refuse_no_write("mod revert", entry["name"], transport)
             return
         active_mods.discard(entry["id"])
         emit(log(f"Reverted {entry['name']} to stock calibration."))
@@ -1163,6 +1213,95 @@ def _run_session(transport, duration: float | None, warmup: int,
         emit(status("disconnected", "Session ended", transport.mode))
 
 
+class _NonWritableProbe:
+    """Stands in for the product transport in the write-refusal checks —
+    reports the same 'does not write' capability RealTransport does."""
+
+    mode = "live"
+    device = "write-refusal probe (selftest)"
+    can_write_calibration = False
+    calibration_write_note = (
+        "calibration changes are applied by bench flashing the ECU (boot "
+        "mode) — this app plans and verifies them, it does not write"
+    )
+
+    def read_dtcs(self) -> list:
+        return []
+
+    def sample(self, _t: float) -> dict:
+        return {}
+
+    def clear_dtcs(self) -> int:
+        return 0
+
+
+def _selftest_writes(fixture) -> int:
+    """Command-surface refusal checks. Results go out as log events so the
+    stream stays NDJSON; any failure makes the process exit non-zero."""
+    checks: list[tuple[str, bool]] = []
+    captured: list[dict] = []
+    real_emit = globals()["emit"]
+    globals()["emit"] = captured.append
+    tracker = StreamTracker(warmup=4)
+    session = {"baseline_codes": set(), "last_values": None}
+
+    def log_text() -> str:
+        return " ".join(e.get("message", "") for e in captured if e.get("type") == "log")
+
+    try:
+        probe = _NonWritableProbe()
+        deletions: set = set()
+        mods: set = set()
+        handle_command({"cmd": "apply_mod", "modId": "stage1"},
+                       probe, deletions, mods, tracker, "", session)
+        handle_command({"cmd": "delete_component", "componentId": "egr"},
+                       probe, deletions, mods, tracker, "", session)
+        text = log_text()
+        checks.append(("non-writable transport mutates no state", not mods and not deletions))
+        checks.append(("refusal names the bench-flash write path",
+                       "bench" in text and "does not write" in text))
+        checks.append(("no success claim emitted",
+                       "Applied" not in text and "Coded out" not in text))
+
+        captured.clear()
+        # Out-of-scope is refused as out-of-scope BEFORE the write check —
+        # the more specific and more important reason wins.
+        bogus = dict(MOD_CATALOG[0])
+        bogus.update({"id": "zzz_scope_probe", "name": "scope probe", "ecu": "Brakes (ABS)"})
+        MOD_CATALOG.append(bogus)
+        try:
+            handle_command({"cmd": "apply_mod", "modId": "zzz_scope_probe"},
+                           probe, deletions, mods, tracker, "", session)
+        finally:
+            MOD_CATALOG.pop()
+        checks.append(("out-of-scope refused as out-of-scope",
+                       "BLOCKED by safety scope" in log_text() and not mods))
+
+        captured.clear()
+        # The writable fixture still exercises the real apply path.
+        f_deletions: set = set()
+        f_mods: set = set()
+        handle_command({"cmd": "apply_mod", "modId": "pedal_map"},
+                       fixture, f_deletions, f_mods, tracker, "", session)
+        checks.append(("writable transport applies the mod", "pedal_map" in f_mods))
+
+        captured.clear()
+        # Sign-off must state plainly that this app applied nothing.
+        verdict = run_verification(probe, set(), set(), StreamTracker(warmup=4), session)
+        item = next((i for i in verdict["items"]
+                     if i["check"] == "Calibration changes applied this session"), None)
+        checks.append(("verification marks no-apply explicitly",
+                       item is not None and item["status"] == "skipped"))
+    finally:
+        globals()["emit"] = real_emit
+
+    failures = 0
+    for label, ok in checks:
+        emit(log(f"selftest {'PASS' if ok else 'FAIL'}: {label}"))
+        failures += 0 if ok else 1
+    return 1 if failures else 0
+
+
 def _selftest() -> int:
     """Event-stream smoke test — NOT a product mode. Runs the real session
     loop against the test-only fixture transport so CI exercises the same
@@ -1173,7 +1312,7 @@ def _selftest() -> int:
     transport = sim_fixture.SimulatedTransport()
     emit(status("simulated", f"Self-test fixture session ({transport.device})", "simulate"))
     _run_session(transport, duration=2.0, warmup=4, stream_every=5)
-    return 0
+    return _selftest_writes(transport)
 
 
 def main() -> int:

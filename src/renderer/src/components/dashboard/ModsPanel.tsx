@@ -129,11 +129,16 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
           )}
         </CardTitle>
         <CardDescription>
-          Calibrations and coding on the Engine and ZF 8HP70 gearbox ECUs — scoped
-          performance changes only, every mod reverts to stock
+          Calibration planning for the Engine and ZF 8HP70 gearbox ECUs —
+          applied by bench flashing; this app verifies the result
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <p className="rounded-md border border-chart-4/40 bg-chart-4/10 px-3 py-2 text-xs leading-snug text-muted-foreground">
+          Mods are applied by bench flashing the ECU (boot mode) — this app
+          plans the change and verifies it afterwards; it does not write to
+          the ECU. Apply controls are disabled.
+        </p>
         {catalog.length === 0 && (
           <p className="text-sm text-muted-foreground">
             {running
@@ -210,7 +215,8 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
                             size="sm"
                             variant="outline"
                             className="h-7 w-full text-xs"
-                            disabled={!running}
+                            disabled
+                            title="Applied by bench flashing — this app does not write to the ECU"
                             onClick={() => onRevert(mod.id)}
                           >
                             <RotateCcw className="size-3.5" />
@@ -221,7 +227,8 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
                             size="sm"
                             variant={confirming ? "destructive" : "default"}
                             className="h-7 w-full text-xs"
-                            disabled={!running}
+                            disabled
+                            title="Applied by bench flashing — this app does not write to the ECU"
                             onClick={() => handleClick(mod)}
                           >
                             {confirming
@@ -241,11 +248,10 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
         })}
 
         <p className="text-[10px] leading-snug text-muted-foreground">
-          Mods write calibration coding on Engine (0x7E0) and
-          the ZF 8HP70 auto (0x7E1) only. Fuel and mechanical requirements shown on each mod
-          are real-world preconditions — the monitor logs them with every
-          apply. Overrun burble raises exhaust temperatures and is off-road
-          use.
+          Mods target Engine (0x7E0) and the ZF 8HP70 auto (0x7E1) only.
+          Fuel and mechanical requirements shown on each mod are real-world
+          preconditions for the flash. Overrun burble raises exhaust
+          temperatures and is off-road use.
         </p>
       </CardContent>
     </Card>

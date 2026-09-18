@@ -21,6 +21,12 @@ class SimulatedTransport:
     mode = "simulate"
     device = "Simulated J2534 pass-thru (test fixture — no hardware)"
 
+    # The fixture models a writable ECU so the command path (apply/revert/
+    # delete/restore) stays exercisable in tests. The product transport
+    # reports can_write_calibration = False.
+    can_write_calibration = True
+    calibration_write_note = "test fixture — simulated calibration writes"
+
     def __init__(self):
         self._sim_did_map = None
 

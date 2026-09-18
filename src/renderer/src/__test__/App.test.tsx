@@ -158,58 +158,52 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(
       screen.getByText(/CONFLICT — the ECU uses the ASV/i)
     ).toBeVisible();
-    // exhaust flap is active in the mock session
-    expect(screen.getByText(/^Coded out$/i)).toBeVisible();
-    expect(screen.getByRole("button", { name: /restore stock coding/i })).toBeVisible();
+    // Nothing can ever be coded out by this app — no active badge, no restore
+    expect(screen.queryByText(/^Coded out$/i)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /restore stock coding/i })
+    ).toBeNull();
   });
 
-  test("deleting a component requires confirmation and sends the command", async () => {
-    // No running session yet: delete buttons disabled
+  test("deletion controls are disabled — deletions are applied by bench flashing", async () => {
+    // Even with a session running, this app never writes: delete controls
+    // stay disabled and send nothing, and nothing is ever "coded out".
     expect(
-      screen.getByRole("button", { name: /delete component/i })
-    ).toBeDisabled();
+      screen.getAllByRole("button", { name: /delete component/i }).length
+    ).toBeGreaterThanOrEqual(1);
+    screen
+      .getAllByRole("button", { name: /delete component/i })
+      .forEach((btn) => expect(btn).toBeDisabled());
 
     await act(async () => {
       dashboardListener()(CONNECTED_STATUS);
     });
 
-    // First click only arms the confirmation
+    screen
+      .getAllByRole("button", { name: /delete component/i })
+      .forEach((btn) => expect(btn).toBeDisabled());
+    expect(
+      screen.queryByRole("button", { name: /restore stock coding/i })
+    ).toBeNull();
+    expect(screen.queryByText(/^Coded out$/i)).toBeNull();
+    expect(
+      screen.getAllByText(/applied by bench flashing/i).length
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText(/does not write to the ECU/i).length
+    ).toBeGreaterThanOrEqual(1);
+
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /delete component/i }));
+      screen
+        .getAllByRole("button", { name: /delete component/i })
+        .forEach((btn) => fireEvent.click(btn));
     });
     expect(commandMock()).not.toHaveBeenCalledWith(
       expect.objectContaining({ cmd: "delete_component" })
     );
-
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: /confirm \(off-road use\)/i })
-      );
-    });
-
-    await waitFor(() => {
-      expect(commandMock()).toHaveBeenCalledWith({
-        cmd: "delete_component",
-        componentId: "egr",
-      });
-    });
-  });
-
-  test("restoring a coded-out component sends the command", async () => {
-    await act(async () => {
-      dashboardListener()(CONNECTED_STATUS);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /restore stock coding/i }));
-    });
-
-    await waitFor(() => {
-      expect(commandMock()).toHaveBeenCalledWith({
-        cmd: "restore_component",
-        componentId: "start_stop_memory",
-      });
-    });
+    expect(commandMock()).not.toHaveBeenCalledWith(
+      expect.objectContaining({ cmd: "restore_component" })
+    );
   });
 
   test("renders the safety scope and performance mods catalog", () => {
@@ -220,52 +214,46 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(screen.getByText(/Performance Mods/i)).toBeVisible();
     expect(screen.getByText("Stage 1 calibration")).toBeVisible();
     expect(screen.getByText(/Rev limiter \+300 rpm/i)).toBeVisible();
-    expect(screen.getByText(/^Applied$/)).toBeVisible(); // stage1 active
-    expect(screen.getByRole("button", { name: /revert to stock/i })).toBeVisible();
+    // Nothing can ever be applied by this app — no active badge, no revert
+    expect(screen.queryByText(/^Applied$/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /revert to stock/i })
+    ).toBeNull();
   });
 
-  test("applying a performance mod requires confirmation and sends the command", async () => {
-    expect(screen.getByRole("button", { name: /apply mod/i })).toBeDisabled();
+  test("mod controls are disabled — mods are applied by bench flashing", async () => {
+    // Even with a session running, this app never writes: apply controls
+    // stay disabled and send nothing, and nothing is ever "applied".
+    screen
+      .getAllByRole("button", { name: /apply mod/i })
+      .forEach((btn) => expect(btn).toBeDisabled());
 
     await act(async () => {
       dashboardListener()(CONNECTED_STATUS);
     });
 
-    // First click only arms the confirmation
+    screen
+      .getAllByRole("button", { name: /apply mod/i })
+      .forEach((btn) => expect(btn).toBeDisabled());
+    expect(
+      screen.queryByRole("button", { name: /revert to stock/i })
+    ).toBeNull();
+    expect(screen.queryByText(/^Applied$/)).toBeNull();
+    expect(
+      screen.getAllByText(/applied by bench flashing/i).length
+    ).toBeGreaterThanOrEqual(1);
+
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /apply mod/i }));
+      screen
+        .getAllByRole("button", { name: /apply mod/i })
+        .forEach((btn) => fireEvent.click(btn));
     });
     expect(commandMock()).not.toHaveBeenCalledWith(
       expect.objectContaining({ cmd: "apply_mod" })
     );
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /confirm apply/i }));
-    });
-
-    await waitFor(() => {
-      expect(commandMock()).toHaveBeenCalledWith({
-        cmd: "apply_mod",
-        modId: "rev_limit",
-      });
-    });
-  });
-
-  test("reverting an applied mod sends the command", async () => {
-    await act(async () => {
-      dashboardListener()(CONNECTED_STATUS);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /revert to stock/i }));
-    });
-
-    await waitFor(() => {
-      expect(commandMock()).toHaveBeenCalledWith({
-        cmd: "revert_mod",
-        modId: "stage1",
-      });
-    });
+    expect(commandMock()).not.toHaveBeenCalledWith(
+      expect.objectContaining({ cmd: "revert_mod" })
+    );
   });
 
   test("renders cluster tell-tales driven by codes and live data", () => {
@@ -347,10 +335,17 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(
       screen.getByText(/550 stock · 580 VW transient · 620 single-turbo Audi/i)
     ).toBeVisible();
-    // An un-run pull check is SKIP, not a fake PASS
-    expect(screen.getByText(/^SKIP$/)).toBeVisible();
+    // An un-run pull check is SKIP, not a fake PASS — and so is the
+    // "changes applied" check, since this app never writes
+    expect(screen.getAllByText(/^SKIP$/).length).toBeGreaterThanOrEqual(2);
     expect(
       screen.getByText(/no dyno pull this session — run one before sign-off/i)
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Calibration changes applied this session/i)
+    ).toBeVisible();
+    expect(
+      screen.getByText(/this app does not write to the ECU/i)
     ).toBeVisible();
   });
 
