@@ -20,7 +20,11 @@
   <link rel="apple-touch-icon" href="icon.png" />
   <meta property="og:title" content="VW Diagnostics" />
   <meta property="og:description" content="Desktop diagnostics & tuning dashboard for the VW 3.0 V6 TDI." />
-  <meta property="og:image" content="icon.png" />
+  <link rel="canonical" href="https://bushintel77-star.github.io/vw-diagnostics/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://bushintel77-star.github.io/vw-diagnostics/" />
+  <meta property="og:image" content="https://bushintel77-star.github.io/vw-diagnostics/icon.png" />
+  <meta name="twitter:card" content="summary" />
   <!-- Palette mirrors the app's light theme (src/renderer/src/assets/theme.css):
        grey structure + red trim (#f0693f chart-1, #ef4444 destructive). -->
   <style>
@@ -31,15 +35,32 @@
       --muted: #f4f4f5;          /* --muted / --accent */
       --red: #f0693f;            /* --chart-1 (Activity icon, gauges) */
       --red-deep: #ef4444;       /* --destructive */
+      --red-text: #c2410c;       /* WCAG AA text variant of --red on white */
+      --red-text-deep: #bd3f0c;  /* AA variant for grey bands / tinted chips */
+      --teal-text: #1e7a70;      /* AA text variant of --teal */
+      --deny-text: #dc2626;      /* AA text variant of --red-deep */
       --teal: #2a9d90;           /* --chart-2 (live badge) */
       --radius: 12px;            /* --radius 0.75rem */
       --serif: ui-serif, Georgia, "Times New Roman", serif;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .btn-primary, .btn-secondary, .card { transition: none; }
+      .btn-primary:hover { transform: none; }
+    }
     body {
-      /* mirrors the app body: bg-gradient-to-tr from-primary/30 to-background */
-      background: linear-gradient(to top right, rgba(24, 24, 27, 0.22), #ffffff 55%);
+      /* mirrors the app body: bg-gradient-to-tr from-primary/30 to-background,
+         scoped to the hero; the upper layer fades to pure white so the band
+         ends without a seam (a bare size clip slices the tint mid-tone). */
+      background-color: #fff;
+      background-image:
+        linear-gradient(to bottom, rgba(255, 255, 255, 0) 55%, #ffffff 100%),
+        linear-gradient(to top right, rgba(24, 24, 27, 0.22), rgba(255, 255, 255, 0) 55%);
+      background-repeat: no-repeat;
+      background-size: 100% 760px;
+      background-position: top left;
       color: var(--fg);
       font-family: Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       line-height: 1.6;
@@ -48,11 +69,18 @@
     a { color: inherit; }
 
     .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+    .skip {
+      position: absolute; left: -9999px; top: 0; z-index: 20;
+      background: var(--fg); color: #fff; padding: 8px 14px;
+      border-radius: 0 0 8px 0; font-size: 14px; text-decoration: none;
+    }
+    .skip:focus { left: 0; }
 
     /* ---------- header (matches the dashboard header bar) ---------- */
     header {
       position: sticky; top: 0; z-index: 10;
       background: rgba(255, 255, 255, 0.85);
+      -webkit-backdrop-filter: blur(12px);
       backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
     }
@@ -66,6 +94,12 @@
     .nav .spacer { flex: 1; }
     .nav a.src { color: var(--muted-fg); font-size: 14px; text-decoration: none; }
     .nav a.src:hover { color: var(--fg); }
+    .nav .name, .nav a.src { white-space: nowrap; }
+    @media (max-width: 420px) {
+      .nav { gap: 8px; min-height: 57px; }  /* +1px border = 58px header */
+      .nav .name { font-size: 15px; }
+      .nav a.src { font-size: 13px; }
+    }
 
     /* ---------- hero ---------- */
     .hero { text-align: center; padding: 84px 0 60px; }
@@ -75,10 +109,10 @@
     }
     .hero h1 {
       font-family: var(--serif);
-      font-size: 46px; font-weight: 700; letter-spacing: -0.5px;
+      font-size: clamp(30px, 9vw, 46px); font-weight: 700; letter-spacing: -0.5px;
       margin: 26px 0 8px;
     }
-    .hero h1 .trim { color: var(--red); }
+    .hero h1 .trim { color: var(--red-text); }
     .hero .tag { color: var(--muted-fg); font-size: 18px; max-width: 640px; margin: 0 auto; }
     .hero .tag strong { color: var(--fg); font-weight: 600; }
 
@@ -105,11 +139,17 @@
     }
     .btn-secondary:hover { border-color: #a1a1aa; }
     .cta-note { color: var(--muted-fg); font-size: 13px; margin-top: 14px; }
+    .status-note {
+      max-width: 700px; margin-left: auto; margin-right: auto;
+      background: #fff; border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 10px 16px;
+    }
 
     /* ---------- sections ---------- */
     section { padding: 56px 0; }
+    section[id] { scroll-margin-top: 74px; }  /* clears the 58px sticky header */
     .kicker {
-      color: var(--red); font-size: 12px; font-weight: 700;
+      color: var(--red-text); font-size: 12px; font-weight: 700;
       letter-spacing: 1.5px; text-transform: uppercase;
     }
     h2 { font-family: var(--serif); font-size: 28px; font-weight: 700; letter-spacing: -0.3px; margin: 6px 0 8px; }
@@ -126,20 +166,21 @@
       transition: border-color 0.12s ease;
     }
     .card:hover { border-color: #a1a1aa; }
-    .card .k { color: var(--red); font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
-    .card.t .k { color: var(--teal); }
+    .card .k { color: var(--red-text); font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+    .card.t .k { color: var(--teal-text); }
     .card h3 { font-size: 16px; margin: 8px 0 6px; }
     .card p { color: var(--muted-fg); font-size: 14px; }
 
     /* safety band — app's muted grey panel */
     .safety { background: var(--muted); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .safety .kicker { color: var(--red-text-deep); }
     .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 6px; }
     .pill {
       font-size: 13px; padding: 6px 12px; border-radius: 999px;
       border: 1px solid var(--border); color: var(--muted-fg); background: #fff;
     }
-    .pill.allow { color: var(--teal); border-color: rgba(42, 157, 144, 0.45); }
-    .pill.deny  { color: var(--red-deep); border-color: rgba(239, 68, 68, 0.4); }
+    .pill.allow { color: var(--teal-text); border-color: rgba(42, 157, 144, 0.45); }
+    .pill.deny  { color: var(--deny-text); border-color: rgba(239, 68, 68, 0.4); }
 
     /* install steps — numbered in the app's red */
     .steps { counter-reset: step; display: grid; gap: 14px; max-width: 640px; }
@@ -149,7 +190,7 @@
       flex: 0 0 32px; height: 32px;
       display: inline-flex; align-items: center; justify-content: center;
       border-radius: 50%;
-      background: rgba(240, 105, 63, 0.14); color: var(--red);
+      background: rgba(240, 105, 63, 0.14); color: var(--red-text-deep);
       font-weight: 700; font-size: 15px;
     }
     .step div { padding-top: 4px; }
@@ -163,8 +204,10 @@
 </head>
 <body>
 
+<a class="skip" href="#content">Skip to content</a>
+
 <header>
-  <div class="wrap nav">
+  <nav class="wrap nav" aria-label="Main">
     <!-- Activity/pulse mark, same as the dashboard header -->
     <span class="pulse" aria-hidden="true">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -173,8 +216,10 @@
     <span class="version">v1.0.0</span>
     <span class="spacer"></span>
     <a class="src" href="https://github.com/bushintel77-star/vw-diagnostics">Source on GitHub →</a>
-  </div>
+  </nav>
 </header>
+
+<main id="content">
 
 <div class="hero">
   <div class="wrap">
@@ -194,7 +239,7 @@
       <a class="btn-secondary" href="#install">Install guide</a>
     </div>
     <p class="cta-note">Windows 10/11 · installer ≈ 80&nbsp;MB · also runs on macOS &amp; Linux from source</p>
-    <p class="cta-note">Live mode today: channels, DTCs, freeze frames. Flash read/write is gated behind ECU security access — the app labels what is real and what is simulated.</p>
+    <p class="cta-note status-note">Live mode today: channels, DTCs, freeze frames. Flash read/write is gated behind ECU security access — the app labels what is real and what is simulated.</p>
   </div>
 </div>
 
@@ -285,6 +330,8 @@
     </div>
   </div>
 </section>
+
+</main>
 
 <footer>
   <div class="wrap">
