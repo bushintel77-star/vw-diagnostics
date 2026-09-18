@@ -15,7 +15,7 @@ import { cn } from "@/utils";
 
 const GROUPS: Array<{ id: PerformanceMod["group"]; title: string; note: string }> = [
   { id: "engine", title: "Engine", note: "Engine ECU (0x7E0) calibrations & coding" },
-  { id: "transmission", title: "Transmission", note: "DSG TCU (0x7E1) calibrations" },
+  { id: "transmission", title: "Transmission", note: "ZF 8HP70 TCU (0x7E1) calibrations" },
   {
     id: "offroad",
     title: "Overrun & Acoustic",
@@ -128,7 +128,7 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
           )}
         </CardTitle>
         <CardDescription>
-          Calibrations and coding on the Engine and DSG ECUs — scoped
+          Calibrations and coding on the Engine and ZF 8HP70 gearbox ECUs — scoped
           performance changes only, every mod reverts to stock
         </CardDescription>
       </CardHeader>
@@ -241,7 +241,7 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
 
         <p className="text-[10px] leading-snug text-muted-foreground">
           Mods load simulated calibration slots/coding on Engine (0x7E0) and
-          DSG (0x7E1) only. Fuel and mechanical requirements shown on each mod
+          the ZF 8HP70 auto (0x7E1) only. Fuel and mechanical requirements shown on each mod
           are real-world preconditions — the monitor logs them with every
           apply. Overrun burble raises exhaust temperatures and is off-road
           use.
