@@ -263,9 +263,10 @@ DID_MAP = {
     "batteryV": (0xF448, 1, lambda b: b[0] * 0.1),  # TODO: confirm on DDXC
 }
 
-# Inverse scalers (value -> DID payload bytes). Used by the simulated
-# transport so simulated traffic flows through the SAME decode path as
-# real hardware — the mapping itself is exercised, not bypassed.
+# Inverse scalers (value -> DID payload bytes). Used by the test fixture
+# transport (resources/sim_fixture.py) so fixture traffic flows through
+# the SAME decode path as real hardware — the mapping itself is
+# exercised, not bypassed.
 DID_ENCODERS = {
     "rpm": lambda v: (lambda raw: bytes([raw >> 8, raw & 0xFF]))(int(round(v * 4))),
     "speedKph": lambda v: bytes([int(v) & 0xFF]),
@@ -524,7 +525,7 @@ def _selftest() -> int:
           str(probe[0]))
 
     # Encoder round-trip: value -> DID payload -> decode recovers the value
-    # (this is the path the simulated transport runs on every sample)
+    # (this is the path the test fixture transport runs on every sample)
     roundtrip = {
         "rpm": (780.0, DID_MAP["rpm"][2]),
         "speedKph": (100, DID_MAP["speedKph"][2]),

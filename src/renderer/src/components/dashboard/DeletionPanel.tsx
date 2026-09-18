@@ -73,7 +73,7 @@ const DeletionPanel = ({
           )}
         </CardTitle>
         <CardDescription>
-          Code components out via simulated adaptation/coding — every change is
+          Code components out via ECU adaptation/coding — every change is
           reversible with Restore
         </CardDescription>
       </CardHeader>

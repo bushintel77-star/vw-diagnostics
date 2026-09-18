@@ -1,8 +1,10 @@
 import { vi } from "vitest";
 import { DiagnosticEvent } from "@shared/types";
 
-// Data events replayed to every subscriber. Status events are NOT replayed
-// automatically so tests can drive connection state explicitly.
+// Data events replayed to every subscriber while `mockState.replaySession`
+// is on — they stand in for a real J2534 session's stream. Status events are
+// NOT replayed automatically so tests can drive connection state explicitly.
+// Tests of the disconnected UI set `mockState.replaySession = false` first.
 const MOCK_SESSION: DiagnosticEvent[] = [
   {
     type: "info",
@@ -152,44 +154,6 @@ const MOCK_SESSION: DiagnosticEvent[] = [
     },
   },
   {
-    type: "pull",
-    index: 1,
-    label: "Stock",
-    modsActive: [],
-    revLimit: 4800,
-    samples: [
-      { rpm: 1200, powerKw: 50.6, torqueNm: 402.6, boostKpa: 124.0 },
-      { rpm: 2000, powerKw: 114.7, torqueNm: 547.4, boostKpa: 176.0 },
-      { rpm: 4000, powerKw: 164.9, torqueNm: 393.6, boostKpa: 228.0 },
-      { rpm: 4800, powerKw: 145.9, torqueNm: 290.1, boostKpa: 236.0 },
-    ],
-    peakPowerKw: 166.0,
-    peakPowerRpm: 4000,
-    peakTorqueNm: 550.0,
-    peakTorqueRpm: 2000,
-    peakBoostKpa: 236.0,
-    timestamp: "2026-08-15T03:00:00.000Z",
-  },
-  {
-    type: "pull",
-    index: 2,
-    label: "stage1",
-    modsActive: ["stage1"],
-    revLimit: 4800,
-    samples: [
-      { rpm: 1200, powerKw: 58.3, torqueNm: 463.6, boostKpa: 133.0 },
-      { rpm: 2000, powerKw: 140.3, torqueNm: 668.1, boostKpa: 201.0 },
-      { rpm: 4000, powerKw: 227.8, torqueNm: 543.7, boostKpa: 253.0 },
-      { rpm: 4800, powerKw: 216.9, torqueNm: 431.3, boostKpa: 261.0 },
-    ],
-    peakPowerKw: 228.0,
-    peakPowerRpm: 4000,
-    peakTorqueNm: 680.0,
-    peakTorqueRpm: 2000,
-    peakBoostKpa: 261.0,
-    timestamp: "2026-08-15T03:00:01.000Z",
-  },
-  {
     type: "dids",
     entries: [
       { channel: "rpm", did: "0xF40C", ok: true, value: 790, note: "standard set" },
@@ -210,7 +174,7 @@ const MOCK_SESSION: DiagnosticEvent[] = [
   {
     type: "verification",
     passed: true,
-    source: "simulated",
+    source: "ecu",
     dutyProfile: "Standard (tow-capable)",
     envelope: {
       ceilingSustainedNm: 700,
@@ -245,6 +209,8 @@ const MOCK_SESSION: DiagnosticEvent[] = [
   },
 ];
 
+export const mockState = { replaySession: true };
+
 const context = Object.defineProperty(window, "context", {
   writable: true,
   value: {
@@ -257,7 +223,7 @@ const context = Object.defineProperty(window, "context", {
     startDiagnostic: vi.fn().mockImplementation(() =>
       Promise.resolve({
         started: true,
-        message: "Diagnostic monitor started in simulation mode.",
+        message: "Diagnostic monitor started.",
       })
     ),
     stopDiagnostic: vi.fn().mockImplementation(() =>
@@ -269,7 +235,7 @@ const context = Object.defineProperty(window, "context", {
     onDiagnosticEvent: vi
       .fn()
       .mockImplementation((listener: (event: DiagnosticEvent) => void) => {
-        MOCK_SESSION.forEach(listener);
+        if (mockState.replaySession) MOCK_SESSION.forEach(listener);
         return () => {};
       }),
     checkForUpdate: vi.fn().mockImplementation(() =>

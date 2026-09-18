@@ -41,10 +41,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: python resources/uds.py --selftest
-      # Simulate mode is stdlib-only; pyj2534 is deliberately NOT installed so
-      # CI exercises the import-guard path.
-      - name: Monitor simulate-mode smoke test
-        run: python resources/j2534_monitor.py --simulate --duration 5 > monitor-events.ndjson
+      # The monitor has no simulated product mode. --selftest is the test-only
+      # path: the same session loop driven against resources/sim_fixture.py,
+      # which exercises the NDJSON event shape and the DID encode/decode codec
+      # (stdlib-only; pyj2534 is deliberately NOT installed).
+      - name: Monitor event-stream smoke test (test fixture)
+        run: python resources/j2534_monitor.py --selftest > monitor-events.ndjson
       - name: Assert event stream is well-formed NDJSON
         run: |
           python - <<'EOF'

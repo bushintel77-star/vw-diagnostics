@@ -23,12 +23,16 @@ Commands: newline-delimited JSON on stdin, written by the main process:
 Debug output belongs on stderr, never stdout.
 
 Modes:
-  --simulate  Force the simulated transport (no hardware needed).
-  (default)   Try the real pyJ2534 transport first, fall back to simulation.
+  (default)    Open the real pyJ2534 transport — the only product mode.
+               If no interface is attached the monitor reports the real
+               TransportError and stays alive so the UI can show it.
+  --selftest   Event-stream smoke test: runs the same session loop against
+               resources/sim_fixture.py (test-only simulated transport).
+               Not a product mode — the fixture is never imported on the
+               normal run path, and fabricated data cannot reach the UI.
 
-The real transport is not wired yet: without an ECU connected there is
-nothing to talk to. open_real_transport() below marks every integration
-point (PassThruOpen/Connect/StartMsgFilter + UDS requests over ISO-TP).
+open_real_transport() below marks every integration point
+(PassThruOpen/Connect/StartMsgFilter + UDS requests over ISO-TP).
 """
 
 import argparse
@@ -36,20 +40,12 @@ import base64
 import json
 import math
 import queue
-import random
 import signal
 import sys
 import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
-
-# Optional at runtime: simulation only needs the protocol layer to route its
-# samples through the DID codec; without uds.py the sim still runs raw.
-try:
-    import uds as _uds
-except ImportError:
-    _uds = None
 
 LIVE_INTERVAL_S = 0.5
 
@@ -202,7 +198,7 @@ def build_analysis(dtcs: list, values: dict | None, alerts: list | None = None,
 # ---------------------------------------------------------------------------
 # Safety scope: this tool writes to PERFORMANCE modules only. Default-deny —
 # any catalog entry or command targeting an ECU outside ALLOWED_MODULES is
-# refused before a (simulated or real) write happens. Steering, brakes and
+# refused before a write happens. Steering, brakes and
 # every restraint/safety module are permanently out of scope.
 # ---------------------------------------------------------------------------
 
@@ -530,9 +526,9 @@ def run_verification(transport, active_deletions: set, active_mods: set,
                      tracker: StreamTracker, session: dict,
                      duty_profile: str = "standard") -> dict:
     """Post-work sign-off: the workshop 'scan after work' plus read-back
-    verification, automated. In live mode every input is re-read from the
-    ECU at this moment (DTCs via 0x19, channels via 0x22); in simulation it
-    grades the monitor's own state and says so via `source`."""
+    verification, automated. Every input is re-read from the ECU at this
+    moment (DTCs via 0x19, channels via 0x22). Under the test fixture it
+    grades the fixture's state and says so via `source`."""
     profile = DUTY_PROFILES.get(duty_profile, DUTY_PROFILES["standard"])
     source = "ecu" if transport.mode == "live" else "simulated"
 
@@ -642,74 +638,6 @@ def run_verification(transport, active_deletions: set, active_mods: set,
 
 
 # ---------------------------------------------------------------------------
-# Dyno pull model: full-throttle sweep reference curves for the 3.0 V6 TDI
-# (2018 Amarok, 224 PS flavour). Diesel torque shape: early plateau, hard
-# taper; Stage 1 raises plateau and slightly extends the sweep. Simulated
-# reference data until live mode.
-# ---------------------------------------------------------------------------
-
-PULL_START_RPM = 1200
-PULL_STEP_RPM = 100
-
-PULL_PROFILES = {
-    "stock": {"base": 400.0, "plateau": 550.0, "plateau_start": 1500, "plateau_end": 2800,
-              "end_torque": 270.0, "boost_add": 0.0},
-    "stage1": {"base": 460.0, "plateau": 680.0, "plateau_start": 1500, "plateau_end": 3000,
-               "end_torque": 440.0, "boost_add": 25.0},
-}
-
-
-def pull_torque(rpm: float, profile: dict, rev_limit: float) -> float:
-    if rpm <= profile["plateau_start"]:
-        frac = (rpm - PULL_START_RPM) / max(1.0, profile["plateau_start"] - PULL_START_RPM)
-        return profile["base"] + (profile["plateau"] - profile["base"]) * frac
-    if rpm <= profile["plateau_end"]:
-        return profile["plateau"]
-    frac = (rpm - profile["plateau_end"]) / max(1.0, rev_limit - profile["plateau_end"])
-    return profile["plateau"] + (profile["end_torque"] - profile["plateau"]) * frac
-
-
-def simulate_pull(active_mods: set, index: int) -> dict:
-    rev_limit = 5100 if "rev_limit" in active_mods else 4800
-    profile = PULL_PROFILES["stage1"] if "stage1" in active_mods else PULL_PROFILES["stock"]
-
-    samples = []
-    rpm = float(PULL_START_RPM)
-    while rpm <= rev_limit:
-        # simulated sensor jitter only -- nothing security-sensitive
-        torque = pull_torque(rpm, profile, rev_limit) + random.uniform(-6, 6)
-        boost = (
-            100.0 + 140.0 * (1.0 - math.exp(-(rpm - 1100.0) / 1200.0))
-            + profile["boost_add"] + random.uniform(-3, 3)
-        )
-        samples.append({
-            "rpm": int(rpm),
-            "powerKw": round(torque * rpm / 9549.0, 1),
-            "torqueNm": round(torque, 1),
-            "boostKpa": round(boost, 1),
-        })
-        rpm += PULL_STEP_RPM
-
-    power = max(samples, key=lambda s: s["powerKw"])
-    torque = max(samples, key=lambda s: s["torqueNm"])
-    mods = sorted(active_mods)
-    return {
-        "type": "pull",
-        "index": index,
-        "label": " + ".join(mods) if mods else "Stock",
-        "modsActive": mods,
-        "revLimit": rev_limit,
-        "samples": samples,
-        "peakPowerKw": power["powerKw"],
-        "peakPowerRpm": power["rpm"],
-        "peakTorqueNm": torque["torqueNm"],
-        "peakTorqueRpm": torque["rpm"],
-        "peakBoostKpa": max(s["boostKpa"] for s in samples),
-        "timestamp": now_iso(),
-    }
-
-
-# ---------------------------------------------------------------------------
 # Component deletion catalog — performance-scoped. group maps to the
 # dashboard sections: engine / offroad.
 # ---------------------------------------------------------------------------
@@ -782,167 +710,18 @@ MOD_CATALOG = [
 
 
 # ---------------------------------------------------------------------------
-# Transports. A real transport must implement the same methods.
+# Transports. The product only ever opens the real J2534 transport; the
+# simulated test fixture lives in resources/sim_fixture.py and is imported
+# solely by the --selftest path below.
 # ---------------------------------------------------------------------------
 
-
-class SimulatedTransport:
-    """Fabricates plausible VW ECU data for dashboard development."""
-
-    mode = "simulate"
-    device = "Simulated J2534 pass-thru (no hardware)"
-
-    def __init__(self):
-        self._sim_did_map = None
-
-    INFO = {
-        "protocol": "ISO 15765-4 (CAN 500 kbps)",
-        "requestId": "0x7E0",
-        "responseId": "0x7E8",
-        "ecuName": "Engine Control Module \u2014 Bosch EDC17 (3.0 V6 TDI, DDXC / TDI550)",
-        "partNumber": "2H0906027",
-        "swVersion": "6177",
-        "hwVersion": "H14",
-        "coding": "0011721",
-        "vin": "WV1ZZZ2H0JW123456",
-    }
-
-    # freezeFrame = conditions captured when each fault set (UDS freeze frame)
-    DTCS = [
-        {
-            "code": "P0299",
-            "status": "Stored",
-            "description": "Turbocharger/supercharger underboost condition",
-            "mileageKm": 186410,
-            "freezeFrame": {"rpm": 2210, "coolantTempC": 88, "engineLoadPct": 71, "speedKph": 96},
-        },
-        {
-            "code": "P0671",
-            "status": "Stored",
-            "description": "Cylinder 1 glow plug circuit malfunction",
-            "mileageKm": 186044,
-            "freezeFrame": {"rpm": 795, "coolantTempC": 6, "engineLoadPct": 12, "speedKph": 0},
-        },
-        {
-            "code": "P2002",
-            "status": "Pending",
-            "description": "Diesel particulate filter efficiency below threshold (Bank 1)",
-            "mileageKm": 186905,
-            "freezeFrame": {"rpm": 2080, "coolantTempC": 84, "engineLoadPct": 41, "speedKph": 104},
-        },
-        {
-            "code": "P2015",
-            "status": "Stored",
-            "description": "Intake manifold runner position sensor (Bank 1): implausible signal",
-            "mileageKm": 185772,
-            "freezeFrame": {"rpm": 1490, "coolantTempC": 84, "engineLoadPct": 31, "speedKph": 43},
-        },
-    ]
-
-    def read_info(self) -> dict:
-        return self.INFO
-
-    # Canned DID-probe result mirroring uds.DID_MAP/DID_CANDIDATES — every
-    # channel answers in the happy simulated world. DIDs follow the corrected
-    # ISO 15031-5 mirror (speed 0x0D, intake temp 0x0F, boost via 0xF4A3).
-    SIM_DID_ENTRIES = [
-        {"channel": "rpm", "did": "0xF40C", "ok": True, "value": 790, "note": "standard set"},
-        {"channel": "speedKph", "did": "0xF40D", "ok": True, "value": 0, "note": "standard set"},
-        {"channel": "coolantTempC", "did": "0xF405", "ok": True, "value": 90, "note": "standard set"},
-        {"channel": "intakeTempC", "did": "0xF40F", "ok": True, "value": 32, "note": "standard set"},
-        {"channel": "engineLoadPct", "did": "0xF404", "ok": True, "value": 24, "note": "standard set"},
-        {"channel": "batteryV", "did": "0xF448", "ok": True, "value": 14.0, "note": "standard set (unconfirmed on DDXC)"},
-        {"channel": "railPressureBar", "did": "0xF484", "ok": True, "value": 300, "note": "community EDC17 table (x0.1 bar)"},
-        {"channel": "boostPressureKpa", "did": "0xF4A3", "ok": True, "value": 100, "note": "charge pressure (x0.03 kPa, community table)"},
-        {"channel": "pedalPct", "did": "0xF4A1", "ok": True, "value": 0, "note": "accelerator position (x100/255 %)"},
-    ]
-
-    def probe_dids(self) -> list:
-        return [dict(entry) for entry in self.SIM_DID_ENTRIES]
-
-    SIM_BACKUP_BYTES = 65536  # placeholder size — a real EDC17 image is MBs
-
-    def total_backup_bytes(self) -> int | None:
-        return self.SIM_BACKUP_BYTES
-
-    def read_backup_chunks(self, block: int = 4096):
-        """Yield the placeholder 'stock image'. In simulation there is no
-        ECU to read, so the backup is a deterministic pattern the Node host
-        assembles and writes — exercising the exact event/persistence path
-        the real read will use."""
-        sent = 0
-        seed = 0
-        while sent < self.SIM_BACKUP_BYTES:
-            take = min(block, self.SIM_BACKUP_BYTES - sent)
-            yield bytes((seed + j) % 251 for j in range(take))
-            sent += take
-            seed += 7
-
-    def read_dtcs(self) -> list:
-        return [dict(dtc) for dtc in self.DTCS]
-
-    def clear_dtcs(self) -> int:
-        count = len(self.DTCS)
-        self.DTCS = []
-        return count
-
-    def remove_codes(self, codes: list) -> int:
-        """Codes the ECU stops reporting after a component is coded out."""
-        removed = [dtc for dtc in self.DTCS if dtc["code"] in codes]
-        self.DTCS = [dtc for dtc in self.DTCS if dtc["code"] not in codes]
-        return len(removed)
-
-    def sample(self, t: float) -> dict:
-        """t = seconds since session start; 3.0 V6 TDI idling on a bench."""
-
-        def noise(spread: float) -> float:
-            # simulated sensor jitter only -- nothing security-sensitive
-            return random.uniform(-spread, spread)
-
-        def clamp(value: float, lo: float, hi: float) -> float:
-            return max(lo, min(hi, value))
-
-        warmup = min(t / 120.0, 1.0)  # coolant reaches operating temp in ~2 min
-        raw = {
-            "rpm": round(clamp(790 + 35 * math.sin(t * 0.9) + noise(15), 660, 900)),
-            "speedKph": 0,
-            "coolantTempC": round(clamp(18 + 74 * warmup + noise(0.4), 12, 95)),
-            "intakeTempC": round(clamp(26 + 3 * math.sin(t * 0.2) + noise(0.3), 15, 45)),
-            "boostPressureKpa": round(clamp(99 + 2.0 * math.sin(t * 0.7) + noise(1.0), 95, 104)),
-            "pedalPct": round(clamp(0 + 1.5 * math.sin(t * 1.3) + noise(0.4), 0, 3), 1),
-            "engineLoadPct": round(clamp(21 + 6 * math.sin(t * 0.5) + noise(1.5), 12, 38)),
-            "batteryV": round(14.0 + 0.2 * math.sin(t * 0.11) + noise(0.03), 2),
-            "railPressureBar": round(clamp(290 + 25 * math.sin(t * 0.8) + noise(8), 250, 340)),
-        }
-        return self._through_did_codec(raw)
-
-    def _through_did_codec(self, raw: dict) -> dict:
-        """Encode every channel into its DID payload and decode it back
-        through the same scalars the real transport uses. Simulation
-        therefore exercises the DID mapping instead of bypassing it —
-        a wrong DID or width surfaces here first, in the safe world."""
-        if _uds is None:
-            return raw  # protocol layer absent: raw sim values (legacy mode)
-        if self._sim_did_map is None:
-            sim_map = dict(_uds.DID_MAP)
-            for channel in _uds.DID_CANDIDATES:
-                sim_map[channel] = _uds.DID_CANDIDATES[channel][0][:3]
-            self._sim_did_map = sim_map
-        decoded = {}
-        for name, (_did, nbytes, scaler) in self._sim_did_map.items():
-            try:
-                payload = _uds.DID_ENCODERS[name](raw[name])
-                decoded[name] = scaler(payload) if len(payload) == nbytes else None
-            except (KeyError, ValueError, OverflowError):
-                decoded[name] = None
-        return decoded
 
 
 class RealTransport:
     """Live transport: UDS client over the J2534 pass-thru device.
 
-    Implements the SimulatedTransport interface (mode/device/read_info/
-    read_dtcs/clear_dtcs/sample) so the monitor loop is transport-agnostic.
+    Implements the transport interface (mode/device/read_info/read_dtcs/
+    clear_dtcs/sample) so the monitor loop is transport-agnostic.
     Read-only services are wired; write-side calibration channels are marked
     TODO and arrive with Phase 2.
     """
@@ -952,7 +731,7 @@ class RealTransport:
 
     def __init__(self, client):
         self.client = client
-        # import locally so simulation never requires uds.py to be present
+        # imported locally so uds.py is only required once a session opens
         import uds  # noqa: PLC0415
         self.uds = uds
         self.did_map = dict(uds.DID_MAP)  # copy — probing mutates per session
@@ -1108,15 +887,6 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
                    tracker: StreamTracker, vin: str, session: dict) -> None:
     name = cmd.get("cmd")
 
-    if name == "run_pull":
-        session["pulls"] = session.get("pulls", 0) + 1
-        emit(log(f"Dyno pull #{session['pulls']} — simulated WOT sweep to "
-                 f"{7000 if 'rev_limit' in active_mods else 6500} rpm."))
-        pull_event = simulate_pull(active_mods, session["pulls"])
-        session["last_pull"] = pull_event
-        emit(pull_event)
-        return
-
     if name == "verify_changes":
         duty = cmd.get("dutyProfile")
         if duty not in DUTY_PROFILES:
@@ -1181,7 +951,7 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
 
     if name == "clear_dtc":
         count = transport.clear_dtcs()
-        emit(log(f"Cleared {count} fault code(s) (simulated UDS 0x14)."))
+        emit(log(f"Cleared {count} fault code(s) (UDS 0x14)."))
         emit({"type": "dtc", "codes": transport.read_dtcs()})
         emit(build_analysis(transport.read_dtcs(), None,
                             stream=tracker.snapshot(), provenance=tracker.provenance()))
@@ -1199,7 +969,7 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
             return
         active_deletions.add(entry["id"])
         suffix = " (OFF-ROAD)" if entry["offRoadOnly"] else ""
-        emit(log(f"Coded out {entry['name']}{suffix} — simulated {entry['method']} on {entry['ecu']} ECU."))
+        emit(log(f"Coded out {entry['name']}{suffix} — {entry['method']} on {entry['ecu']} ECU."))
         for step in entry.get("steps", []):
             emit(log(f"  \u2192 {step}"))
         for paired_id in entry.get("commonlyPairedWith", []):
@@ -1238,7 +1008,7 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
             return
         active_mods.add(entry["id"])
         suffix = " (OFF-ROAD)" if entry["offRoadOnly"] else ""
-        emit(log(f"Applied {entry['name']}{suffix}: {entry['parameter']} — simulated {entry['method']} on {entry['ecu']} ECU."))
+        emit(log(f"Applied {entry['name']}{suffix}: {entry['parameter']} — {entry['method']} on {entry['ecu']} ECU."))
         if entry.get("requirement"):
             emit(log(f"Requirement: {entry['requirement']}."))
         emit_mods(active_mods)
@@ -1275,31 +1045,36 @@ def check_alerts(values: dict, active: dict) -> list:
 # ---------------------------------------------------------------------------
 
 
-def run(simulate: bool, duration: float | None, warmup: int, stream_every: int) -> None:
-    transport: SimulatedTransport | None = None
+def run(duration: float | None, warmup: int, stream_every: int) -> None:
+    """Product path: real J2534 only, no simulated fallback. If the
+    interface can't be opened the genuine TransportError is reported as an
+    error status and the monitor stays alive so the UI keeps showing the
+    real reason until the user stops the session."""
+    emit(status("starting", "Launching diagnostic monitor…", "live"))
+    emit(status("connecting", "Opening J2534 pass-thru device…", "live"))
+    try:
+        transport = open_real_transport()
+    except RuntimeError as exc:
+        emit(status("error", str(exc), "live"))
+        # Block on stdin rather than exiting so the error state persists on
+        # screen. The main process kills us on Stop; stdin EOF (parent
+        # gone) ends the wait cleanly.
+        sys.stdin.read()
+        return
+    emit(status("connected", f"Connected via {transport.device}", "live"))
+    _run_session(transport, duration, warmup, stream_every)
 
-    emit(status("starting", "Launching diagnostic monitor\u2026", "live" if not simulate else "simulate"))
 
-    if simulate:
-        transport = SimulatedTransport()
-        emit(status("simulated", f"No ECU connected \u2014 simulation active ({transport.device})", "simulate"))
-    else:
-        emit(status("connecting", "Opening J2534 pass-thru device\u2026", "live"))
-        try:
-            transport = open_real_transport()
-            emit(status("connected", f"Connected via {transport.device}", "live"))
-        except RuntimeError as exc:
-            transport = SimulatedTransport()
-            emit(status("simulated", f"{exc} \u2014 falling back to simulation", "simulate"))
-
+def _run_session(transport, duration: float | None, warmup: int,
+                 stream_every: int) -> None:
     commands = start_command_worker()
     ecu_info = transport.read_info()
     vin = ecu_info.get("vin", "")
     emit({"type": "info", "info": ecu_info})
     emit({"type": "dtc", "codes": transport.read_dtcs()})
 
-    # Learn the live DID map from the ECU (or replay the simulated one) so
-    # every dashboard channel has a confirmed address behind it.
+    # Learn the live DID map from the ECU so every dashboard channel has a
+    # confirmed address behind it.
     if hasattr(transport, "probe_dids"):
         try:
             entries = transport.probe_dids()
@@ -1316,7 +1091,6 @@ def run(simulate: bool, duration: float | None, warmup: int, stream_every: int) 
     active_mods: set = set()
     tracker = StreamTracker(warmup=warmup)
     session: dict = {
-        "pulls": 0,
         "baseline_codes": {c["code"] for c in transport.read_dtcs()},
         "last_values": None,
     }
@@ -1389,9 +1163,23 @@ def run(simulate: bool, duration: float | None, warmup: int, stream_every: int) 
         emit(status("disconnected", "Session ended", transport.mode))
 
 
+def _selftest() -> int:
+    """Event-stream smoke test — NOT a product mode. Runs the real session
+    loop against the test-only fixture transport so CI exercises the same
+    NDJSON event shape and DID encode/decode codec a live session uses,
+    without fabricated data ever being reachable from the shipped app."""
+    import sim_fixture  # noqa: PLC0415 — test fixture, outside the run path
+
+    transport = sim_fixture.SimulatedTransport()
+    emit(status("simulated", f"Self-test fixture session ({transport.device})", "simulate"))
+    _run_session(transport, duration=2.0, warmup=4, stream_every=5)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="VW J2534 diagnostic monitor")
-    parser.add_argument("--simulate", action="store_true", help="force simulated transport")
+    parser.add_argument("--selftest", action="store_true",
+                        help="run the event-stream smoke test on the test fixture")
     parser.add_argument("--duration", type=float, default=None, help="stop after N seconds (testing)")
     parser.add_argument("--warmup-samples", type=int, default=60,
                         help="samples before learned baselines replace static thresholds (testing)")
@@ -1399,8 +1187,11 @@ def main() -> int:
                         help="emit a streaming analysis every N samples (testing)")
     args = parser.parse_args()
 
+    if args.selftest:
+        return _selftest()
+
     try:
-        run(simulate=args.simulate, duration=args.duration,
+        run(duration=args.duration,
             warmup=max(2, args.warmup_samples), stream_every=max(1, args.stream_every))
     except Exception as exc:  # never let a traceback hit stdout
         emit({"type": "error", "message": f"{type(exc).__name__}: {exc}"})

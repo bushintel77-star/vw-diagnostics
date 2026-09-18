@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom";
 import "./utils/window.mock";
+import { mockState } from "./utils/window.mock";
 import { render, screen, fireEvent, waitFor } from "./utils";
+import { cleanup } from "@testing-library/react";
 import { expect, test, describe, beforeEach, vi } from "vitest";
 import { act } from "react";
 import App from "@/App";
@@ -13,9 +15,19 @@ const commandMock = () =>
 const subscribeMock = () =>
   window.context.onDiagnosticEvent as ReturnType<typeof vi.fn>;
 
-/** The listener App registered via onDiagnosticEvent. */
+/** The listener App most recently registered via onDiagnosticEvent. */
 const dashboardListener = (): DiagnosticEventListener =>
-  subscribeMock().mock.calls[0][0];
+  subscribeMock().mock.calls.at(-1)![0];
+
+const CONNECTED_STATUS = {
+  type: "status",
+  phase: "connected",
+  message: "Connected via J2534 pass-thru",
+  mode: "live",
+} as const;
+
+const J2534_MISSING =
+  "pyj2534 is not installed (pip install pyj2534) and/or the vendor J2534 DLL is not registered";
 
 describe("Testing the VW diagnostic dashboard", () => {
   beforeEach(async () => {
@@ -23,6 +35,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     stopMock().mockClear();
     commandMock().mockClear();
     subscribeMock().mockClear();
+    mockState.replaySession = true;
     await act(async () => {
       render(<App />);
     });
@@ -30,8 +43,10 @@ describe("Testing the VW diagnostic dashboard", () => {
 
   test("renders the dashboard shell with replayed session data", () => {
     expect(screen.getByText(/VW Diagnostic Dashboard/i)).toBeVisible();
-    expect(screen.getByText(/^Simulation$/)).toBeVisible(); // session mode badge
-    expect(screen.getByText(/Not connected/i)).toBeVisible();
+    // No simulation mode exists: no checkbox, no simulation badge.
+    expect(screen.queryByLabelText("Simulation mode")).toBeNull();
+    expect(screen.queryByText(/^Simulation$/)).toBeNull();
+    expect(screen.getAllByText("Not connected").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("WV1ZZZ2H0JW123456")).toBeVisible();
     // P0299 shows in both the DTC table and the assistant finding
     expect(screen.getAllByText("P0299").length).toBeGreaterThanOrEqual(2);
@@ -63,28 +78,16 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(screen.getByText(/91% confidence — extrapolation, not a certainty/i)).toBeVisible();
   });
 
-  test("defaults to simulation mode and starts the monitor on click", async () => {
-    expect(screen.getByLabelText("Simulation mode")).toBeChecked();
-
+  test("Start Session requests a real connection — no options, no mode flag", async () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /start session/i }));
     });
 
     await waitFor(() => {
-      expect(startMock()).toHaveBeenCalledWith({ simulate: true });
+      expect(startMock()).toHaveBeenCalledTimes(1);
     });
-  });
-
-  test("honors unchecking simulation mode", async () => {
-    fireEvent.click(screen.getByLabelText("Simulation mode"));
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /start session/i }));
-    });
-
-    await waitFor(() => {
-      expect(startMock()).toHaveBeenCalledWith({ simulate: false });
-    });
+    // No arguments at all: the IPC surface carries no simulate flag.
+    expect(startMock()).toHaveBeenCalledWith();
   });
 
   test("reacts to status events, then stops the running session", async () => {
@@ -118,12 +121,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(clearButton).toBeDisabled(); // no running session yet
 
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     // First click only arms the confirmation.
@@ -172,12 +170,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     ).toBeDisabled();
 
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     // First click only arms the confirmation
@@ -204,12 +197,7 @@ describe("Testing the VW diagnostic dashboard", () => {
 
   test("restoring a coded-out component sends the command", async () => {
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     await act(async () => {
@@ -240,12 +228,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(screen.getByRole("button", { name: /apply mod/i })).toBeDisabled();
 
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     // First click only arms the confirmation
@@ -270,12 +253,7 @@ describe("Testing the VW diagnostic dashboard", () => {
 
   test("reverting an applied mod sends the command", async () => {
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     await act(async () => {
@@ -287,42 +265,6 @@ describe("Testing the VW diagnostic dashboard", () => {
         cmd: "revert_mod",
         modId: "stage1",
       });
-    });
-  });
-
-  test("renders the dyno pull graphs with before/after comparison", () => {
-    expect(screen.getByText(/Performance Graphs — Dyno Pull/i)).toBeVisible();
-    // latest pull peaks (stage1 mock, real TDI550 tuner figures)
-    expect(screen.getByText(/228 kW \(306 hp\)/i)).toBeVisible();
-    expect(screen.getByText(/680 Nm @ 2,000 rpm/i)).toBeVisible();
-    // delta row between stock and stage1 pulls
-    expect(screen.getByText(/\+62\.0 kW power/i)).toBeVisible();
-    expect(screen.getByText(/\+130 Nm torque/i)).toBeVisible();
-    // pull history chips
-    expect(screen.getByText(/#1 · Stock · 166 kW/i)).toBeVisible();
-    expect(screen.getByText(/#2 · stage1 · 228 kW/i)).toBeVisible();
-    // simulated-reference honesty label
-    expect(screen.getByText(/Simulated reference curves/i)).toBeVisible();
-  });
-
-  test("running a dyno pull sends the command once a session is active", async () => {
-    expect(screen.getByRole("button", { name: /run dyno pull/i })).toBeDisabled();
-
-    await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /run dyno pull/i }));
-    });
-
-    await waitFor(() => {
-      expect(commandMock()).toHaveBeenCalledWith({ cmd: "run_pull" });
     });
   });
 
@@ -362,12 +304,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     ).toBeDisabled();
 
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     await act(async () => {
@@ -384,12 +321,7 @@ describe("Testing the VW diagnostic dashboard", () => {
 
   test("the duty profile selector changes what verification receives", async () => {
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     fireEvent.change(screen.getByLabelText("Duty profile"), {
@@ -409,7 +341,7 @@ describe("Testing the VW diagnostic dashboard", () => {
   });
 
   test("verification is honest about its source and shows the factory envelope", () => {
-    expect(screen.getByText("simulated self-check")).toBeVisible();
+    expect(screen.getByText("re-read from ECU")).toBeVisible();
     expect(screen.getByText(/duty: Standard \(tow-capable\)/i)).toBeVisible();
     expect(screen.getByText(/vs ceilings 715 \/ 700 Nm/i)).toBeVisible();
     expect(
@@ -439,12 +371,7 @@ describe("Testing the VW diagnostic dashboard", () => {
     ).toBeDisabled();
 
     await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "Simulation active",
-        mode: "simulate",
-      });
+      dashboardListener()(CONNECTED_STATUS);
     });
 
     await act(async () => {
@@ -460,37 +387,6 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(
       screen.getByText(/sha256 a3f5c7d9b1e02468/i)
     ).toBeVisible();
-  });
-
-  test("shows the live-fallback banner with retry when simulation was not requested", async () => {
-    // Request LIVE by unticking simulation, then start.
-    fireEvent.click(screen.getByLabelText("Simulation mode"));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /start session/i }));
-    });
-    expect(startMock()).toHaveBeenCalledWith({ simulate: false });
-
-    await act(async () => {
-      dashboardListener()({
-        type: "status",
-        phase: "simulated",
-        message: "pyj2534 is not installed — falling back to simulation",
-        mode: "simulate",
-      });
-    });
-
-    expect(screen.getByText(/requested a LIVE connection/i)).toBeVisible();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /retry live/i }));
-    });
-    await waitFor(() => {
-      expect(startMock()).toHaveBeenCalledWith({ simulate: false });
-    });
-  });
-
-  test("renders the 710 Nm overboost overlay on a stage-1 pull", () => {
-    expect(screen.getByText("10-s overboost 710 Nm")).toBeVisible();
   });
 
   test("coolant tell-tale turns blue when cold and red when overheating", async () => {
@@ -529,5 +425,64 @@ describe("Testing the VW diagnostic dashboard", () => {
     const coolant = screen.getByRole("img", { name: /coolant/i });
     expect(coolant).toHaveAttribute("data-state", "on");
     expect(coolant.getAttribute("title")).toContain("Overheating");
+  });
+});
+
+describe("No J2534 interface attached", () => {
+  beforeEach(async () => {
+    cleanup();
+    mockState.replaySession = false;
+    await act(async () => {
+      render(<App />);
+    });
+  });
+
+  test("explains no interface is connected and what is needed", () => {
+    expect(screen.getByText(/No interface connected/i)).toBeVisible();
+    expect(
+      screen.getByText(/attach a J2534 pass-thru device/i)
+    ).toBeVisible();
+    expect(screen.getByText(/No session started yet/i)).toBeVisible();
+    expect(screen.getAllByText("Not connected").length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("panels show unavailable states — never fabricated vehicle data", () => {
+    expect(screen.getByText(/No data — not connected/i)).toBeVisible();
+    expect(
+      screen.getByText(/No ECU data — connect a J2534 interface/i)
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Start a session to load the deletion catalog/i)
+    ).toBeVisible();
+    // No invented telemetry may appear: no fake VIN, DTCs or mod state.
+    expect(screen.queryByText(/WV1ZZZ/)).toBeNull();
+    expect(screen.queryByText("P0299")).toBeNull();
+    expect(screen.queryByText(/Stage 1 calibration/)).toBeNull();
+  });
+
+  test("Start Session surfaces the genuine transport error", async () => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start session/i }));
+    });
+    await waitFor(() => {
+      expect(startMock()).toHaveBeenCalledWith();
+    });
+
+    // The monitor reports the real J2534Transport.open() failure verbatim.
+    await act(async () => {
+      dashboardListener()({
+        type: "status",
+        phase: "error",
+        message: J2534_MISSING,
+        mode: "live",
+      });
+    });
+
+    expect(screen.getByText("Error")).toBeVisible();
+    // The verbatim transport error reaches both the error banner and the
+    // Session status line — it is never replaced by a generic message.
+    expect(
+      screen.getAllByText(J2534_MISSING).length
+    ).toBeGreaterThanOrEqual(2);
   });
 });

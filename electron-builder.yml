@@ -9,6 +9,9 @@ files:
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # Test-only transport fixture (fake VIN/DTCs for CI selftest) — must never
+  # ship inside the packaged app.
+  - '!resources/sim_fixture.py'
 asarUnpack:
   - resources/**
 win:

@@ -14,9 +14,7 @@ import {
   DiagnosticCommandResult,
   DiagnosticEvent,
   DiagnosticFlashEvent,
-  DiagnosticMode,
   DiagnosticSessionResult,
-  StartDiagnosticOptions,
 } from "@shared/types";
 
 const FIRST_LINE_TIMEOUT_MS = 10_000;
@@ -44,7 +42,6 @@ async function persistBaselineState(state: BaselineStateFile): Promise<void> {
 }
 
 let child: ChildProcess | null = null;
-let lastMode: DiagnosticMode = "simulate";
 let stoppedByUser = false;
 
 interface PythonCandidate {
@@ -177,18 +174,16 @@ function trySpawn(
 export const isDiagnosticRunning = (): boolean => child !== null;
 
 export async function startDiagnostic(
-  sender: WebContents,
-  options: StartDiagnosticOptions
+  sender: WebContents
 ): Promise<DiagnosticSessionResult> {
   if (child) {
     return { started: false, message: "A diagnostic session is already running." };
   }
 
-  lastMode = options.simulate ? "simulate" : "live";
-  const args = options.simulate ? ["--simulate"] : [];
-
+  // No mode flag: the monitor only ever attempts a real J2534 connection
+  // and reports the genuine TransportError when none is attached.
   for (const candidate of pythonCandidates()) {
-    const proc = await trySpawn(candidate, args);
+    const proc = await trySpawn(candidate, []);
     if (!proc) continue;
 
     child = proc;
@@ -249,7 +244,7 @@ export async function startDiagnostic(
           : code === 0
             ? "Diagnostic session ended."
             : `Monitor exited with code ${code}. ${stderr.trim()}`.trim(),
-        mode: lastMode,
+        mode: "live",
       });
     });
 
@@ -265,9 +260,7 @@ export async function startDiagnostic(
 
     return {
       started: true,
-      message: options.simulate
-        ? "Diagnostic monitor started in simulation mode."
-        : "Diagnostic monitor started; attempting live J2534 connection.",
+      message: "Diagnostic monitor started; attempting live J2534 connection.",
     };
   }
 

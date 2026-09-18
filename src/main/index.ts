@@ -69,8 +69,8 @@ app.whenReady().then(() => {
 
   ipcMain.handle("triggerIPC", () => triggerIPC());
 
-  ipcMain.handle("diagnostic:start", (event, options) =>
-    startDiagnostic(event.sender, options)
+  ipcMain.handle("diagnostic:start", (event) =>
+    startDiagnostic(event.sender)
   );
 
   ipcMain.handle("diagnostic:stop", () => stopDiagnostic());

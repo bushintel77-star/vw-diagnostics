@@ -241,7 +241,7 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
         })}
 
         <p className="text-[10px] leading-snug text-muted-foreground">
-          Mods load simulated calibration slots/coding on Engine (0x7E0) and
+          Mods write calibration coding on Engine (0x7E0) and
           the ZF 8HP70 auto (0x7E1) only. Fuel and mechanical requirements shown on each mod
           are real-world preconditions — the monitor logs them with every
           apply. Overrun burble raises exhaust temperatures and is off-road

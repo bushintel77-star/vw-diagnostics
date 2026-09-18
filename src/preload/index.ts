@@ -19,8 +19,7 @@ try {
     getVersions: (...args: Parameters<GetVersionsFn>) =>
       ipcRenderer.invoke("getVersions", ...args),
     triggerIPC: () => ipcRenderer.invoke("triggerIPC"),
-    startDiagnostic: (options: { simulate: boolean }) =>
-      ipcRenderer.invoke("diagnostic:start", options),
+    startDiagnostic: () => ipcRenderer.invoke("diagnostic:start"),
     stopDiagnostic: () => ipcRenderer.invoke("diagnostic:stop"),
     sendDiagnosticCommand: (command: DiagnosticCommand) =>
       ipcRenderer.invoke("diagnostic:command", command),

@@ -55,14 +55,16 @@ const PYTHON_CANDIDATES =
     ? [["python", []], ["py", ["-3"]]]
     : [["python3", []], ["python", []]];
 
-function startMonitor(simulate = true) {
+function startMonitor() {
   if (monitor) return { started: false, message: "A session is already running." };
+  // No mode flag: the monitor only ever attempts a real J2534 connection
+  // and reports the genuine TransportError when none is attached.
   for (const [command, baseArgs] of PYTHON_CANDIDATES) {
     let proc;
     try {
       proc = spawn(
         command,
-        [...baseArgs, "resources/j2534_monitor.py", ...(simulate ? ["--simulate"] : [])],
+        [...baseArgs, "resources/j2534_monitor.py"],
         { stdio: ["pipe", "pipe", "pipe"], windowsHide: true }
       );
     } catch {
@@ -81,7 +83,7 @@ function startMonitor(simulate = true) {
         type: "status",
         phase: "disconnected",
         message: code === 0 ? "Monitor exited." : `Monitor exited with code ${code}.`,
-        mode: "simulate",
+        mode: "live",
       });
     });
     const lines = createInterface({ input: proc.stdout });
@@ -162,8 +164,8 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/start") {
-    const body = await readBody(req);
-    const result = startMonitor(body.simulate !== false);
+    await readBody(req); // consume the request body; there are no options
+    const result = startMonitor();
     res.writeHead(200, { ...CORS, "Content-Type": "application/json" });
     return res.end(JSON.stringify(result));
   }

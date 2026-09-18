@@ -1,8 +1,9 @@
 /**
  * Live web bridge. In a plain browser there is no Electron preload; if the
  * local live server (scripts/dev-web.mjs) is running, connect to the REAL
- * Python monitor over SSE/HTTP and expose it as `window.context`. Only when
- * that server is unreachable do we fall back to the page-local demo bridge.
+ * Python monitor over SSE/HTTP and expose it as `window.context`. When the
+ * server is unreachable we install an honest "not connected" context —
+ * never fabricated data.
  */
 import {
   DiagnosticCommand,
@@ -10,9 +11,7 @@ import {
   DiagnosticEventListener,
   DiagnosticEvent,
   DiagnosticSessionResult,
-  StartDiagnosticOptions,
 } from "@shared/types";
-import { ensureDemoContext } from "./demoBridge";
 
 // Same-origin proxy path (vite proxies /live to the monitor server); the
 // direct address is the fallback when the renderer is served elsewhere.
@@ -94,8 +93,8 @@ async function tryLiveBridge(): Promise<boolean> {
     getVersions: () =>
       Promise.resolve({ electron: "web", chrome: "web", node: "web" } as never),
     triggerIPC: () => {},
-    startDiagnostic: async (options: StartDiagnosticOptions): Promise<DiagnosticSessionResult> => {
-      const response = await post(base, "/start", options, token);
+    startDiagnostic: async (): Promise<DiagnosticSessionResult> => {
+      const response = await post(base, "/start", {}, token);
       if (!response) {
         return { started: false, message: "Live server unreachable." };
       }
@@ -143,12 +142,40 @@ async function tryLiveBridge(): Promise<boolean> {
     openUpdateDownload: () => Promise.resolve(),
   };
 
-  // Viewer convenience: start a simulated-transport session on the real monitor.
-  void post(base, "/start", { simulate: true }, token);
   return true;
 }
 
-/** Installs the live bridge when available, else the demo bridge. */
+/**
+ * Browser without the dev bridge: an honest "not connected" context. Every
+ * call reports that no monitor is reachable — fabricated vehicle data is
+ * never served as a stand-in.
+ */
+const installOfflineContext = (): void => {
+  const notConnected = {
+    started: false,
+    message:
+      "No monitor bridge — start the desktop app, or npm run dev:web for a browser session.",
+  };
+  window.context = {
+    getVersions: () =>
+      Promise.resolve({ electron: "web", chrome: "web", node: "web" } as never),
+    triggerIPC: () => {},
+    startDiagnostic: () => Promise.resolve(notConnected),
+    stopDiagnostic: () => Promise.resolve(notConnected),
+    sendDiagnosticCommand: () =>
+      Promise.resolve({ ok: false, message: "No diagnostic session is running." }),
+    onDiagnosticEvent: () => () => {},
+    checkForUpdate: () =>
+      Promise.resolve({
+        status: "unknown" as const,
+        currentVersion: "web",
+        reason: "browser session",
+      }),
+    openUpdateDownload: () => Promise.resolve(),
+  };
+};
+
+/** Installs the live bridge when available, else the offline context. */
 export const ensureContext = async (): Promise<void> => {
   if (typeof window === "undefined" || window.context) {
     return;
@@ -156,5 +183,5 @@ export const ensureContext = async (): Promise<void> => {
   if (await tryLiveBridge()) {
     return;
   }
-  ensureDemoContext();
+  installOfflineContext();
 };

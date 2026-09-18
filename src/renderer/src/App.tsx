@@ -2,12 +2,11 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  Cable,
   Download,
   Play,
-  RotateCcw,
   Square,
   Terminal,
-  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,13 +22,11 @@ import DtcTable from "@/components/dashboard/DtcTable";
 import EcuInfoCard from "@/components/dashboard/EcuInfoCard";
 import AssistantCard from "@/components/dashboard/AssistantCard";
 import StripChart from "@/components/dashboard/StripChart";
-import PullChart from "@/components/dashboard/PullChart";
 import DeletionPanel from "@/components/dashboard/DeletionPanel";
 import ModsPanel, { ScopeCard } from "@/components/dashboard/ModsPanel";
 import UpdateBanner from "@/components/dashboard/UpdateBanner";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
-import { isDemoMode } from "@/web/demoBridge";
 import { isBrowserLive } from "@/web/liveBridge";
 import {
   DiagnosticAnalysisEvent,
@@ -37,7 +34,6 @@ import {
   DiagnosticFlashEvent,
   DiagnosticModsEvent,
   DiagnosticPhase,
-  DiagnosticPullEvent,
   DiagnosticStatusEvent,
   DiagnosticVerificationEvent,
   DidMapEntry,
@@ -85,7 +81,6 @@ const ACTIVE_PHASES: DiagnosticPhase[] = [
   "starting",
   "connecting",
   "connected",
-  "simulated",
 ];
 
 const StatusBadge = ({ status }: { status: DiagnosticStatusEvent | null }) => {
@@ -93,8 +88,6 @@ const StatusBadge = ({ status }: { status: DiagnosticStatusEvent | null }) => {
   switch (status.phase) {
     case "connected":
       return <Badge>Connected</Badge>;
-    case "simulated":
-      return <Badge variant="secondary">Simulation</Badge>;
     case "starting":
     case "connecting":
       return <Badge variant="secondary">Connecting…</Badge>;
@@ -106,7 +99,6 @@ const StatusBadge = ({ status }: { status: DiagnosticStatusEvent | null }) => {
 };
 
 const App = () => {
-  const [simulate, setSimulate] = useState<boolean>(true);
   const [status, setStatus] = useState<DiagnosticStatusEvent | null>(null);
   const [info, setInfo] = useState<EcuInfo | null>(null);
   const [dids, setDids] = useState<DidMapEntry[] | null>(null);
@@ -116,15 +108,12 @@ const App = () => {
   const [analysis, setAnalysis] = useState<DiagnosticAnalysisEvent | null>(null);
   const [deletions, setDeletions] = useState<DiagnosticDeletionsEvent | null>(null);
   const [mods, setMods] = useState<DiagnosticModsEvent | null>(null);
-  const [pulls, setPulls] = useState<DiagnosticPullEvent[]>([]);
   const [history, setHistory] = useState<Partial<Record<keyof LiveValues, number[]>>>({});
   const [selectedChannel, setSelectedChannel] = useState<keyof LiveValues>("rpm");
   const [updates, setUpdates] = useState<number>(0);
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState<boolean>(false);
   const [verification, setVerification] = useState<DiagnosticVerificationEvent | null>(null);
-  const [liveRequested, setLiveRequested] = useState<boolean>(false);
-  const [fallbackDismissed, setFallbackDismissed] = useState<boolean>(false);
   const [lastLiveAt, setLastLiveAt] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [dutyProfile, setDutyProfile] = useState<DutyProfile>("standard");
@@ -141,7 +130,8 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = window.context.onDiagnosticEvent((event) => {      switch (event.type) {
+    const unsubscribe = window.context.onDiagnosticEvent((event) => {
+      switch (event.type) {
         case "status":
           setStatus(event);
           pushLog(event.message);
@@ -183,10 +173,6 @@ const App = () => {
         case "mods":
           setMods(event);
           break;
-        case "pull":
-          setPulls((prev) => [...prev.slice(-3), event]);
-          pushLog(`Dyno pull #${event.index} (${event.label}): ${event.peakPowerKw.toFixed(0)} kW · ${event.peakTorqueNm.toFixed(0)} Nm.`);
-          break;
         case "verification":
           setVerification(event);
           pushLog(`Sign-off verification ${event.passed ? "PASSED" : "FAILED"}.`);
@@ -211,7 +197,6 @@ const App = () => {
   const running =
     busy || (status !== null && ACTIVE_PHASES.includes(status.phase));
 
-  const simulated = status?.mode !== "live";
   const stale =
     running &&
     !busy &&
@@ -219,32 +204,13 @@ const App = () => {
     nowTick - lastLiveAt > STALE_AFTER_MS;
   const secondsSinceUpdate =
     lastLiveAt === null ? null : Math.max(0, Math.round((nowTick - lastLiveAt) / 1000));
-  const showFallbackBanner =
-    status?.phase === "simulated" && liveRequested && !fallbackDismissed;
-
   const handleStart = async () => {
     setBusy(true);
-    setLiveRequested(!simulate);
-    setFallbackDismissed(false);
     try {
-      const result = await window.context.startDiagnostic({ simulate });
+      const result = await window.context.startDiagnostic();
       if (!result.started) pushLog(result.message);
     } catch (error) {
       console.error("Failed to start the diagnostic session:", error);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRetryLive = async () => {
-    setBusy(true);
-    setLiveRequested(true);
-    setFallbackDismissed(false);
-    setSimulate(false);
-    try {
-      await window.context.startDiagnostic({ simulate: false });
-    } catch (error) {
-      console.error("Failed to retry live connection:", error);
     } finally {
       setBusy(false);
     }
@@ -320,15 +286,6 @@ const App = () => {
     }
   };
 
-  const handleRunPull = async () => {
-    try {
-      const result = await window.context.sendDiagnosticCommand({ cmd: "run_pull" });
-      if (!result.ok) pushLog(result.message);
-    } catch (error) {
-      console.error("Failed to run dyno pull:", error);
-    }
-  };
-
   const handleVerify = async () => {
     try {
       const result = await window.context.sendDiagnosticCommand({
@@ -367,12 +324,6 @@ const App = () => {
       appliedMods: mods?.active ?? [],
       codedOutComponents: deletions?.active ?? [],
       moduleScope: mods?.scope ?? null,
-      dynoPulls: pulls.map((p) => ({
-        index: p.index,
-        label: p.label,
-        peakPowerKw: p.peakPowerKw,
-        peakTorqueNm: p.peakTorqueNm,
-      })),
       signOffVerification: verification,
       liveSnapshot: live,
       trends: history,
@@ -413,27 +364,12 @@ const App = () => {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          {isDemoMode() && (
-            <Badge variant="outline" className="text-muted-foreground">
-              Browser demo · simulated
-            </Badge>
-          )}
           {isBrowserLive() && (
             <Badge variant="outline" className="border-chart-2/50 text-chart-2">
               Live Python monitor
             </Badge>
           )}
           <StatusBadge status={status} />
-          <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              aria-label="Simulation mode"
-              checked={simulate}
-              onChange={(event) => setSimulate(event.target.checked)}
-              className="size-4 accent-primary"
-            />
-            Simulation mode
-          </label>
           <Button onClick={handleStart} disabled={running || busy}>
             <Play className="fill-current" />
             Start Session
@@ -469,28 +405,17 @@ const App = () => {
         </Card>
       )}
 
-      {/* live→simulation fallback acknowledgment */}
-      {showFallbackBanner && (
-        <Card className="border-chart-4/50 bg-chart-4/10">
-          <CardContent className="flex flex-wrap items-center gap-3 p-4">
-            <AlertTriangle className="size-5 shrink-0 text-chart-4" />
-            <p className="flex-1 text-sm">
-              You requested a LIVE connection — running SIMULATION instead:{" "}
-              {status?.message}
+      {/* no interface attached — what the user needs to do */}
+      {!running && (status === null || status.phase === "disconnected") && (
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <Cable className="size-5 shrink-0 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              No interface connected — attach a J2534 pass-thru device,
+              install its vendor driver and the{" "}
+              <code className="rounded bg-muted px-1">pyj2534</code> package,
+              then Start Session to connect to the vehicle.
             </p>
-            <Button size="sm" variant="outline" className="h-8" onClick={handleRetryLive}>
-              <RotateCcw className="size-3.5" />
-              Retry live
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-8 w-8 p-0"
-              aria-label="Dismiss simulation notice"
-              onClick={() => setFallbackDismissed(true)}
-            >
-              <X className="size-4" />
-            </Button>
           </CardContent>
         </Card>
       )}
@@ -533,13 +458,21 @@ const App = () => {
             <CardHeader>
               <CardTitle>ECU Identification</CardTitle>
               <CardDescription>
-                Appears once a session connects to an ECU (real or simulated)
+                Appears once a session connects to an ECU
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="h-5 w-48 animate-pulse rounded-md bg-muted" />
-              <div className="h-4 w-full animate-pulse rounded-md bg-muted" />
-              <div className="h-4 w-3/4 animate-pulse rounded-md bg-muted" />
+              {running ? (
+                <>
+                  <div className="h-5 w-48 animate-pulse rounded-md bg-muted" />
+                  <div className="h-4 w-full animate-pulse rounded-md bg-muted" />
+                  <div className="h-4 w-3/4 animate-pulse rounded-md bg-muted" />
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No ECU data — connect a J2534 interface and start a session.
+                </p>
+              )}
             </CardContent>
           </Card>
         )}
@@ -562,11 +495,11 @@ const App = () => {
           </CardHeader>
           <CardContent className="flex flex-wrap items-center gap-x-8 gap-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Mode:</span>
-              {status?.mode === "live" ? (
+              <span className="text-sm text-muted-foreground">Interface:</span>
+              {status && status.phase !== "error" ? (
                 <Badge>Live J2534</Badge>
               ) : (
-                <Badge variant="secondary">Simulation</Badge>
+                <Badge variant="outline">Not connected</Badge>
               )}
             </div>
             <p className="min-h-5 flex-1 text-sm">
@@ -606,16 +539,9 @@ const App = () => {
       {verification && <VerificationCard verification={verification} />}
 
       {/* live data */}
-      <Card className={simulated ? "border-amber-500/40" : undefined}>
+      <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            Live Data
-            {simulated && running && (
-              <Badge variant="outline" className="border-amber-500/50 text-[10px] text-amber-600">
-                simulated data
-              </Badge>
-            )}
-          </CardTitle>
+          <CardTitle className="flex items-center gap-2">Live Data</CardTitle>
           <CardDescription>
             Streaming measuring values (UDS 0x22) with rolling trends —
             intermittent faults show up in the history, not the instant value
@@ -623,14 +549,21 @@ const App = () => {
         </CardHeader>
         <CardContent className={stale ? "opacity-40 grayscale transition-all" : "transition-all"}>
           {live === null ? (
-            <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
-              {GAUGES.map((gauge) => (
-                <div
-                  key={gauge.key}
-                  className="mx-auto h-24 w-24 animate-pulse rounded-full bg-muted"
-                />
-              ))}
-            </div>
+            running ? (
+              <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
+                {GAUGES.map((gauge) => (
+                  <div
+                    key={gauge.key}
+                    className="mx-auto h-24 w-24 animate-pulse rounded-full bg-muted"
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No data — not connected. Start a session with a J2534
+                interface attached to stream live values from the ECU.
+              </p>
+            )
           ) : (
             <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
               {GAUGES.map((gauge) => (
@@ -665,9 +598,6 @@ const App = () => {
         history={history}
         running={running}
       />
-
-      {/* performance graphs */}
-      <PullChart pulls={pulls} running={running} onRunPull={handleRunPull} />
 
       {/* fault codes */}
       <DtcTable codes={codes} running={running} onClear={handleClearCodes} />

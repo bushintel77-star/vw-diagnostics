@@ -3,13 +3,15 @@ export type GetVersionsFn = () => Promise<typeof electronAPI.process.versions>;
 
 // --- J2534 diagnostic monitor (resources/j2534_monitor.py) ---
 
-export type DiagnosticMode = "live" | "simulate";
+// The product monitor only ever runs a real J2534 session. The test fixture
+// (resources/sim_fixture.py, reached only via --selftest) labels its stream
+// "simulate", but that mode never crosses this IPC surface.
+export type DiagnosticMode = "live";
 
 export type DiagnosticPhase =
   | "starting"
   | "connecting"
   | "connected"
-  | "simulated"
   | "disconnected"
   | "error";
 
@@ -232,8 +234,8 @@ export interface DiagnosticVerificationEvent {
   passed: boolean;
   items: VerificationItem[];
   timestamp: string;
-  /** Where the inputs came from: re-read from the ECU, or the monitor's own
-   * simulated state (say so — never pass simulation off as measured). */
+  /** Where the inputs came from: re-read from the ECU, or the test-fixture
+   * transport's own state (say so — never pass the fixture off as measured). */
   source?: "ecu" | "simulated";
   dutyProfile?: string;
   envelope?: FactoryEnvelope;
@@ -278,7 +280,6 @@ export type DiagnosticEvent =
   | DiagnosticDeletionsEvent
   | DiagnosticModsEvent
   | DiagnosticBaselinesEvent
-  | DiagnosticPullEvent
   | DiagnosticVerificationEvent
   | DiagnosticFlashEvent
   | DiagnosticErrorEvent;
@@ -330,10 +331,6 @@ export interface SeedBaselineCommand {
   vehicles: Record<string, VehicleBaseline>;
 }
 
-export interface RunPullCommand {
-  cmd: "run_pull";
-}
-
 export interface VerifyChangesCommand {
   cmd: "verify_changes";
   /** How the vehicle is used — tunes verification scrutiny, never ceilings. */
@@ -355,35 +352,9 @@ export type DiagnosticCommand =
   | ApplyModCommand
   | RevertModCommand
   | SeedBaselineCommand
-  | RunPullCommand
   | VerifyChangesCommand
   | ProbeDidsCommand
   | ReadEcuBackupCommand;
-
-/** One sample of a dyno pull curve. */
-export interface PullSample {
-  rpm: number;
-  powerKw: number;
-  torqueNm: number;
-  boostKpa: number;
-}
-
-/** Full-throttle sweep result (simulated reference curve until live mode). */
-export interface DiagnosticPullEvent {
-  type: "pull";
-  index: number;
-  /** Tuning state label, e.g. "Stock" or "stage1 + rev_limit". */
-  label: string;
-  modsActive: string[];
-  revLimit: number;
-  samples: PullSample[];
-  peakPowerKw: number;
-  peakPowerRpm: number;
-  peakTorqueNm: number;
-  peakTorqueRpm: number;
-  peakBoostKpa: number;
-  timestamp: string;
-}
 
 /** Emitted by the monitor so the main process can persist learned baselines. */
 export interface DiagnosticBaselinesEvent {
@@ -402,19 +373,14 @@ export type SendDiagnosticCommandFn = (
   command: DiagnosticCommand
 ) => Promise<DiagnosticCommandResult>;
 
-export interface StartDiagnosticOptions {
-  /** Force the simulated transport when no ECU/pass-thru device is connected. */
-  simulate: boolean;
-}
-
 export interface DiagnosticSessionResult {
   started: boolean;
   message: string;
 }
 
-export type StartDiagnosticFn = (
-  options: StartDiagnosticOptions
-) => Promise<DiagnosticSessionResult>;
+// No options: the app only ever attempts a real J2534 connection — there
+// is no simulated product mode.
+export type StartDiagnosticFn = () => Promise<DiagnosticSessionResult>;
 
 export type StopDiagnosticFn = () => Promise<DiagnosticSessionResult>;
 
