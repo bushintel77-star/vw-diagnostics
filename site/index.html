@@ -2,124 +2,333 @@
 <!--
   VW Diagnostics — landing page.
 
-  Self-contained: no build step, no external assets except ./icon.png
-  (plus the Inter webfont, same as the app itself uses).
-  Deploy anywhere static (GitHub Pages, Netlify drop, Cloudflare Pages).
-
-  BEFORE PUBLISHING — one edit:
-  search for bushintel77-star below (download link + source link) and replace
-  it with your GitHub username once you've pushed the repo and uploaded
-  dist/vw-diagnostics-setup.exe to a release.
+  Self-contained single file: no build step, no external assets except
+  ./icon.png, and no third-party requests. Deploy anywhere static
+  (GitHub Pages, Netlify drop, Cloudflare Pages).
 -->
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VW Diagnostics — desktop diagnostics &amp; tuning dashboard</title>
-  <meta name="description" content="Desktop diagnostics and performance dashboard for the VW 3.0 V6 TDI. Live streaming gauges, DTC reading, stock ECU backup, and tuning verification against the factory torque envelope." />
+  <meta name="description"
+    content="Desktop diagnostics and performance dashboard for the VW 3.0 V6 TDI. Live streaming gauges, DTC reading, stock ECU backup, and tuning verification against the factory torque envelope." />
   <meta name="theme-color" content="#ffffff" />
   <link rel="icon" type="image/png" href="icon.png" />
   <link rel="apple-touch-icon" href="icon.png" />
+  <link rel="canonical" href="https://bushintel77-star.github.io/vw-diagnostics/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://bushintel77-star.github.io/vw-diagnostics/" />
+  <meta property="og:site_name" content="VW Diagnostics" />
   <meta property="og:title" content="VW Diagnostics" />
-  <meta property="og:description" content="Desktop diagnostics & tuning dashboard for the VW 3.0 V6 TDI." />
-  <meta property="og:image" content="icon.png" />
+  <meta property="og:description" content="Desktop diagnostics &amp; tuning dashboard for the VW 3.0 V6 TDI." />
+  <meta property="og:image" content="https://bushintel77-star.github.io/vw-diagnostics/icon.png" />
+  <meta property="og:image:alt" content="VW Diagnostics app icon" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="VW Diagnostics" />
+  <meta name="twitter:description" content="Desktop diagnostics &amp; tuning dashboard for the VW 3.0 V6 TDI." />
+  <meta name="twitter:image" content="https://bushintel77-star.github.io/vw-diagnostics/icon.png" />
   <!-- Palette mirrors the app's light theme (src/renderer/src/assets/theme.css):
        grey structure + red trim (#f0693f chart-1, #ef4444 destructive). -->
   <style>
     :root {
-      --fg: #0a0a0b;             /* --foreground  hsl(240 10% 3.9%) */
-      --muted-fg: #71717a;       /* --muted-foreground */
-      --border: #e4e4e7;         /* --border */
-      --muted: #f4f4f5;          /* --muted / --accent */
-      --red: #f0693f;            /* --chart-1 (Activity icon, gauges) */
-      --red-deep: #ef4444;       /* --destructive */
-      --teal: #2a9d90;           /* --chart-2 (live badge) */
-      --radius: 12px;            /* --radius 0.75rem */
+      --fg: #0a0a0b;
+      /* --foreground  hsl(240 10% 3.9%) */
+      --muted-fg: #71717a;
+      /* --muted-foreground */
+      --border: #e4e4e7;
+      /* --border */
+      --muted: #f4f4f5;
+      /* --muted / --accent */
+      --red: #f0693f;
+      /* --chart-1 (Activity icon, gauges) */
+      --red-deep: #ef4444;
+      /* --destructive */
+      --teal: #2a9d90;
+      /* --chart-2 (live badge) */
+      /* darker text-only variants — the bright accents fail WCAG AA at small sizes */
+      --red-text: #c2410c;
+      --teal-text: #1e7a70;
+      --deny-text: #dc2626;
+      --radius: 12px;
+      /* --radius 0.75rem */
       --serif: ui-serif, Georgia, "Times New Roman", serif;
     }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
-      /* mirrors the app body: bg-gradient-to-tr from-primary/30 to-background */
-      background: linear-gradient(to top right, rgba(24, 24, 27, 0.22), #ffffff 55%);
+      /* mirrors the app body: bg-gradient-to-tr from-primary/30 to-background;
+         two stacked layers confined to the hero band so the wash fades to
+         pure white without a seam */
+      background-color: #fff;
+      background-image:
+        /* vertical fade to white so the wash ends without a seam */
+        linear-gradient(to bottom, rgba(255, 255, 255, 0) 55%, #ffffff 100%),
+        /* the original diagonal tint, transparent-ending so it composites */
+        linear-gradient(to top right, rgba(24, 24, 27, 0.22), rgba(255, 255, 255, 0) 55%);
+      background-repeat: no-repeat;
+      background-size: 100% 760px;
+      background-position: top left;
       color: var(--fg);
-      font-family: Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
     }
-    a { color: inherit; }
 
-    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+    a {
+      color: inherit;
+    }
+
+    .wrap {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
 
     /* ---------- header (matches the dashboard header bar) ---------- */
     header {
-      position: sticky; top: 0; z-index: 10;
+      position: sticky;
+      top: 0;
+      z-index: 10;
       background: rgba(255, 255, 255, 0.85);
+      -webkit-backdrop-filter: blur(12px);
       backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
     }
-    .nav { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
-    .nav .pulse { color: var(--red); display: inline-flex; }
-    .nav .name { font-family: var(--serif); font-weight: 700; font-size: 18px; letter-spacing: -0.2px; }
-    .version {
-      font-size: 12px; padding: 2px 10px; border-radius: 999px;
-      border: 1px solid var(--border); color: var(--muted-fg);
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 0;
     }
-    .nav .spacer { flex: 1; }
-    .nav a.src { color: var(--muted-fg); font-size: 14px; text-decoration: none; }
-    .nav a.src:hover { color: var(--fg); }
+
+    .nav .pulse {
+      color: var(--red);
+      display: inline-flex;
+    }
+
+    .nav .name {
+      font-family: var(--serif);
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -0.2px;
+      white-space: nowrap;
+    }
+
+    .version {
+      font-size: 12px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted-fg);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .nav .spacer {
+      flex: 1;
+    }
+
+    .nav a.src {
+      color: var(--muted-fg);
+      font-size: 14px;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .nav a.src:hover {
+      color: var(--fg);
+    }
+
+    @media (max-width: 560px) {
+      .nav {
+        gap: 8px;
+        /* keep the header at its 58px desktop height (26px pulse mark is the
+           tallest item once the name shrinks) */
+        min-height: 57px;
+      }
+
+      .nav .name {
+        font-size: 15px;
+      }
+
+      .nav a.src {
+        font-size: 13px;
+      }
+    }
 
     /* ---------- hero ---------- */
-    .hero { text-align: center; padding: 84px 0 60px; }
+    .hero {
+      text-align: center;
+      padding: 84px 0 60px;
+    }
+
     .hero img.app {
-      width: 120px; height: 120px; border-radius: 26px;
+      width: 120px;
+      height: 120px;
+      border-radius: 26px;
       box-shadow: 0 16px 40px rgba(24, 24, 27, 0.18);
     }
+
     .hero h1 {
       font-family: var(--serif);
-      font-size: 46px; font-weight: 700; letter-spacing: -0.5px;
+      font-size: clamp(30px, 8.5vw, 46px);
+      font-weight: 700;
+      letter-spacing: -0.5px;
       margin: 26px 0 8px;
     }
-    .hero h1 .trim { color: var(--red); }
-    .hero .tag { color: var(--muted-fg); font-size: 18px; max-width: 640px; margin: 0 auto; }
-    .hero .tag strong { color: var(--fg); font-weight: 600; }
 
-    .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 34px; }
+    .hero h1 .trim {
+      color: var(--red);
+    }
+
+    .hero .tag {
+      color: var(--muted-fg);
+      font-size: 18px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .hero .tag strong {
+      color: var(--fg);
+      font-weight: 600;
+    }
+
+    .cta-row {
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 34px;
+    }
+
     .btn-primary {
-      display: inline-flex; align-items: center; gap: 10px;
-      background: var(--fg); color: #fff;
-      font-weight: 600; font-size: 16px;
-      padding: 14px 26px; border-radius: var(--radius);
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--fg);
+      color: #fff;
+      font-weight: 600;
+      font-size: 16px;
+      padding: 14px 26px;
+      border-radius: var(--radius);
       text-decoration: none;
       box-shadow: 0 10px 24px rgba(24, 24, 27, 0.22);
       transition: transform 0.12s ease, box-shadow 0.12s ease;
     }
-    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 14px 30px rgba(24, 24, 27, 0.28); }
-    .btn-primary .arrow { color: var(--red); }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 30px rgba(24, 24, 27, 0.28);
+    }
+
+    .btn-primary .arrow {
+      color: var(--red);
+    }
+
     .btn-secondary {
-      display: inline-flex; align-items: center;
-      color: var(--fg); font-size: 15px;
-      padding: 14px 22px; border-radius: var(--radius);
+      display: inline-flex;
+      align-items: center;
+      color: var(--fg);
+      font-size: 15px;
+      padding: 14px 22px;
+      border-radius: var(--radius);
       border: 1px solid var(--border);
       background: #fff;
       text-decoration: none;
       transition: border-color 0.12s ease;
     }
-    .btn-secondary:hover { border-color: #a1a1aa; }
-    .cta-note { color: var(--muted-fg); font-size: 13px; margin-top: 14px; }
+
+    .btn-secondary:hover {
+      border-color: #a1a1aa;
+    }
+
+    .cta-note {
+      color: var(--muted-fg);
+      font-size: 13px;
+      margin-top: 14px;
+    }
+
+    .status-note {
+      color: var(--muted-fg);
+      font-size: 13px;
+      max-width: 700px;
+      /* measured: text needs ~652px to settle on two lines */
+      margin-top: 12px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fafafa;
+    }
+
+    .status-note strong {
+      color: var(--fg);
+      font-weight: 600;
+    }
 
     /* ---------- sections ---------- */
-    section { padding: 56px 0; }
-    .kicker {
-      color: var(--red); font-size: 12px; font-weight: 700;
-      letter-spacing: 1.5px; text-transform: uppercase;
+    section {
+      padding: 56px 0;
     }
-    h2 { font-family: var(--serif); font-size: 28px; font-weight: 700; letter-spacing: -0.3px; margin: 6px 0 8px; }
-    .sub { color: var(--muted-fg); margin-bottom: 28px; max-width: 640px; }
 
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-    @media (max-width: 860px) { .grid { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+    section[id],
+    #main {
+      scroll-margin-top: 72px;
+    }
+
+    .kicker {
+      color: var(--red-text);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      font-family: var(--serif);
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin: 6px 0 8px;
+    }
+
+    .sub {
+      color: var(--muted-fg);
+      margin-bottom: 28px;
+      max-width: 640px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    @media (max-width: 860px) {
+      .grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 560px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .card {
       background: #fff;
       border: 1px solid var(--border);
@@ -127,172 +336,332 @@
       padding: 20px;
       transition: border-color 0.12s ease;
     }
-    .card:hover { border-color: #a1a1aa; }
-    .card .k { color: var(--red); font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
-    .card.t .k { color: var(--teal); }
-    .card h3 { font-size: 16px; margin: 8px 0 6px; }
-    .card p { color: var(--muted-fg); font-size: 14px; }
+
+    .card:hover {
+      border-color: #a1a1aa;
+    }
+
+    .card .k {
+      color: var(--red-text);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .card.t .k {
+      color: var(--teal-text);
+    }
+
+    .card h3 {
+      font-size: 16px;
+      margin: 8px 0 6px;
+    }
+
+    .card p {
+      color: var(--muted-fg);
+      font-size: 14px;
+    }
 
     /* safety band — app's muted grey panel */
-    .safety { background: var(--muted); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-    .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 6px; }
-    .pill {
-      font-size: 13px; padding: 6px 12px; border-radius: 999px;
-      border: 1px solid var(--border); color: var(--muted-fg); background: #fff;
+    .safety {
+      background: var(--muted);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
     }
-    .pill.allow { color: var(--teal); border-color: rgba(42, 157, 144, 0.45); }
-    .pill.deny  { color: var(--red-deep); border-color: rgba(239, 68, 68, 0.4); }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 18px 0 6px;
+    }
+
+    .pill {
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted-fg);
+      background: #fff;
+    }
+
+    .pill.allow {
+      color: var(--teal-text);
+      border-color: rgba(42, 157, 144, 0.45);
+    }
+
+    .pill.deny {
+      color: var(--deny-text);
+      border-color: rgba(239, 68, 68, 0.4);
+    }
 
     /* install steps — numbered in the app's red */
-    .steps { counter-reset: step; display: grid; gap: 14px; max-width: 640px; }
-    .step { display: flex; gap: 16px; align-items: flex-start; }
-    .step::before {
-      counter-increment: step; content: counter(step);
-      flex: 0 0 32px; height: 32px;
-      display: inline-flex; align-items: center; justify-content: center;
-      border-radius: 50%;
-      background: rgba(240, 105, 63, 0.14); color: var(--red);
-      font-weight: 700; font-size: 15px;
+    .steps {
+      counter-reset: step;
+      display: grid;
+      gap: 14px;
+      max-width: 640px;
     }
-    .step div { padding-top: 4px; }
-    .step b { display: block; font-size: 15px; }
-    .step span { color: var(--muted-fg); font-size: 14px; }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      flex: 0 0 32px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(240, 105, 63, 0.14);
+      /* a shade darker than --red-text: #c2410c only reaches 4.45 against
+         the tinted circle — this measures ~4.66 */
+      color: #bd3f0c;
+      font-weight: 700;
+      font-size: 15px;
+    }
+
+    .step div {
+      padding-top: 4px;
+    }
+
+    .step b {
+      display: block;
+      font-size: 15px;
+    }
+
+    .step span {
+      color: var(--muted-fg);
+      font-size: 14px;
+    }
 
     /* footer */
-    footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--muted-fg); font-size: 13px; }
-    footer p + p { margin-top: 6px; }
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0 48px;
+      color: var(--muted-fg);
+      font-size: 13px;
+    }
+
+    footer p+p {
+      margin-top: 6px;
+    }
+
+    /* skip link — visually hidden until focused */
+    .skip-link {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .skip-link:focus {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 30;
+      width: auto;
+      height: auto;
+      clip: auto;
+      clip-path: none;
+      overflow: visible;
+      padding: 10px 16px;
+      border-radius: 8px;
+      background: var(--fg);
+      color: #fff;
+      font-size: 14px;
+      text-decoration: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      *,
+      *::before,
+      *::after {
+        transition: none !important;
+      }
+
+      .btn-primary:hover {
+        transform: none;
+      }
+    }
   </style>
 </head>
+
 <body>
 
-<header>
-  <div class="wrap nav">
-    <!-- Activity/pulse mark, same as the dashboard header -->
-    <span class="pulse" aria-hidden="true">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-    </span>
-    <span class="name">VW Diagnostics</span>
-    <span class="version">v1.0.0</span>
-    <span class="spacer"></span>
-    <a class="src" href="https://github.com/bushintel77-star/vw-diagnostics">Source on GitHub →</a>
-  </div>
-</header>
+  <a class="skip-link" href="#main">Skip to content</a>
 
-<div class="hero">
-  <div class="wrap">
-    <img class="app" src="icon.png" alt="VW Diagnostics app icon" />
-    <h1>VW <span class="trim">Diagnostics</span></h1>
-    <p class="tag">
-      Desktop diagnostics and performance dashboard for the
-      <strong>VW 3.0&nbsp;V6 TDI</strong> (Amarok DDXC). Live data, fault codes,
-      stock ECU backup — and tuning verified against the <strong>factory torque envelope</strong>, not a tuner's word.
-    </p>
-    <div class="cta-row">
-      <!-- Point this at your GitHub Release. The filename is stable across versions,
+  <header>
+    <nav class="wrap nav" aria-label="Main">
+      <!-- Activity/pulse mark, same as the dashboard header -->
+      <span class="pulse" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+        </svg>
+      </span>
+      <span class="name">VW Diagnostics</span>
+      <!-- version chip: bump this text with each release -->
+      <a class="version" href="https://github.com/bushintel77-star/vw-diagnostics/releases/latest">v1.0.0</a>
+      <span class="spacer"></span>
+      <a class="src" href="https://github.com/bushintel77-star/vw-diagnostics">Source on GitHub →</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <div class="hero">
+      <div class="wrap">
+        <img class="app" src="icon.png" alt="VW Diagnostics app icon" />
+        <h1>VW <span class="trim">Diagnostics</span></h1>
+        <p class="tag">
+          Desktop diagnostics and performance dashboard for the
+          <strong>VW 3.0&nbsp;V6 TDI</strong> (Amarok DDXC). Live data, fault codes,
+          and a tuning workflow measured against the <strong>factory torque envelope</strong> — not a tuner's word.
+        </p>
+        <div class="cta-row">
+          <!-- Point this at your GitHub Release. The filename is stable across versions,
            so this link always serves the latest release. -->
-      <a class="btn-primary" href="https://github.com/bushintel77-star/vw-diagnostics/releases/latest/download/vw-diagnostics-setup.exe">
-        Download for Windows <span class="arrow">⬇</span>
-      </a>
-      <a class="btn-secondary" href="#install">Install guide</a>
-    </div>
-    <p class="cta-note">Windows 10/11 · installer ≈ 80&nbsp;MB · also runs on macOS &amp; Linux from source</p>
-  </div>
-</div>
-
-<section id="features">
-  <div class="wrap">
-    <div class="kicker">What you get</div>
-    <h2>Everything runs on your machine</h2>
-    <p class="sub">No cloud, no accounts, no phone-home. The monitor talks to the truck; nothing leaves your laptop.</p>
-    <div class="grid">
-      <div class="card">
-        <div class="k">Live</div>
-        <h3>Streaming gauges</h3>
-        <p>RPM, rail pressure, boost, coolant, pedal — streamed over J2534 at 10 Hz with plausibility checks and rate limiting on every channel.</p>
-      </div>
-      <div class="card t">
-        <div class="k">Diagnostics</div>
-        <h3>Fault codes &amp; freeze frames</h3>
-        <p>Read and clear DTCs with full freeze-frame context, plus diesel-specific analysis notes for the 3.0 TDI.</p>
-      </div>
-      <div class="card">
-        <div class="k">Safety net</div>
-        <h3>Stock ECU backup</h3>
-        <p>Full flash read before anything else, saved with a SHA-256 checksum. The rollback path exists before you need it.</p>
-      </div>
-      <div class="card t">
-        <div class="k">Native stats</div>
-        <h3>Learned baselines</h3>
-        <p>EWMA baselines and z-score deviation per channel, learned from your own truck. It flags what drifts, not what a forum post says.</p>
-      </div>
-      <div class="card">
-        <div class="k">Verification</div>
-        <h3>Sign-off against the factory ladder</h3>
-        <p>Post-tune pulls are checked against the manufacturer variant ladder — 550 stock → 580 VW transient → 700 Nm gearbox rating — with overboost overlay.</p>
-      </div>
-      <div class="card t">
-        <div class="k">Anywhere</div>
-        <h3>View from any device</h3>
-        <p>The dashboard serves over your LAN. Laptop talks to the truck; your phone or tablet is the display.</p>
+          <a class="btn-primary"
+            href="https://github.com/bushintel77-star/vw-diagnostics/releases/latest/download/vw-diagnostics-setup.exe">
+            Download for Windows <span class="arrow">⬇</span>
+          </a>
+          <a class="btn-secondary" href="#install">Install guide</a>
+        </div>
+        <p class="cta-note">Windows 10/11 · installer ≈ 80&nbsp;MB · also runs on macOS &amp; Linux <a
+            href="https://github.com/bushintel77-star/vw-diagnostics#readme">from source</a></p>
+        <p class="status-note"><strong>Status:</strong> diagnostics and simulation. Live reads over J2534 — fault codes,
+          live channels — are wired. Stock-flash read and calibration writes are gated behind OEM security access and
+          are not implemented yet.</p>
       </div>
     </div>
-  </div>
-</section>
 
-<section class="safety" id="safety">
-  <div class="wrap">
-    <div class="kicker">Safety scope</div>
-    <h2>Default-deny</h2>
-    <p class="sub">
-      The interface can only ever address two modules. Everything else is refused at the protocol layer —
-      not hidden in the UI, blocked in code. Destructive actions require a typed confirmation.
-    </p>
-    <div class="pill-row">
-      <span class="pill allow">✓ Engine ECU (0x7E0)</span>
-      <span class="pill allow">✓ Transmission ECU (0x7E1)</span>
-      <span class="pill deny">✗ Steering</span>
-      <span class="pill deny">✗ Brakes / ABS</span>
-      <span class="pill deny">✗ Airbags (SRS)</span>
-      <span class="pill deny">✗ ADAS</span>
-      <span class="pill deny">✗ Every other module</span>
-    </div>
-  </div>
-</section>
-
-<section id="install">
-  <div class="wrap">
-    <div class="kicker">Install</div>
-    <h2>Up in three steps</h2>
-    <p class="sub">Works immediately in simulation mode — no hardware needed. Add a J2534 adapter later for live data.</p>
-    <div class="steps">
-      <div class="step">
-        <div>
-          <b>Download &amp; run the installer</b>
-          <span>vw-diagnostics-setup.exe — standard Windows installer with desktop shortcut.</span>
+    <section id="features">
+      <div class="wrap">
+        <div class="kicker">What you get</div>
+        <h2>Everything runs on your machine</h2>
+        <p class="sub">No cloud, no accounts, no phone-home. The monitor talks to the truck; nothing leaves your laptop.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <div class="k">Live</div>
+            <h3>Streaming gauges</h3>
+            <p>RPM, rail pressure, boost, coolant, pedal — streamed over J2534 at 10 Hz with plausibility checks and
+              rate
+              limiting on every channel.</p>
+          </div>
+          <div class="card t">
+            <div class="k">Diagnostics</div>
+            <h3>Fault codes &amp; freeze frames</h3>
+            <p>Read and clear DTCs with full freeze-frame context, plus diesel-specific analysis notes for the 3.0 TDI.
+            </p>
+          </div>
+          <div class="card">
+            <div class="k">Not yet live</div>
+            <h3>Stock ECU backup</h3>
+            <p>The backup path is built and checksummed with SHA-256, but a real stock read needs OEM security access
+              and the DDXC flash layout — in live mode the app refuses rather than pretending. Simulation writes a
+              placeholder image so the path stays exercised.</p>
+          </div>
+          <div class="card t">
+            <div class="k">Native stats</div>
+            <h3>Learned baselines</h3>
+            <p>EWMA baselines and z-score deviation per channel, learned from your own truck. It flags what drifts, not
+              what a forum post says.</p>
+          </div>
+          <div class="card">
+            <div class="k">Verification</div>
+            <h3>Sign-off against the factory ladder</h3>
+            <p>Pulls are checked against the manufacturer variant ladder — 550 stock → 580 VW transient → 620
+              single-turbo Audi → 700 Nm ZF 8HP70 rating — with overboost overlay. Curves are labelled simulated
+              reference data until the live transport is wired.</p>
+          </div>
+          <div class="card t">
+            <div class="k">Anywhere</div>
+            <h3>View from any device</h3>
+            <p>The dashboard serves over your LAN. Laptop talks to the truck; your phone or tablet is the display.</p>
+          </div>
         </div>
       </div>
-      <div class="step">
-        <div>
-          <b>Open the app, press Start Monitor</b>
-          <span>The dashboard boots in simulated self-check mode so you can explore everything before plugging into the truck.</span>
-        </div>
-      </div>
-      <div class="step">
-        <div>
-          <b>Connect hardware when ready</b>
-          <span>A J2534 adapter (e.g. Scanmatik 2) + the app's Python monitor gives you live ECU data. Back up the stock flash first — the app will insist.</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<footer>
-  <div class="wrap">
-    <p>Independent personal project. Not affiliated with or endorsed by Volkswagen AG. Vehicle manufacturer names and model designations are used for identification only.</p>
-    <p>Modifying ECU software may affect warranty, insurance, and emissions compliance. You are responsible for what you flash. Always keep — and test — your stock backup.</p>
-  </div>
-</footer>
+    <section class="safety" id="safety">
+      <div class="wrap">
+        <div class="kicker">Safety scope</div>
+        <h2>Default-deny</h2>
+        <p class="sub">
+          The interface can only ever address two modules. Everything else is refused at the protocol layer —
+          not hidden in the UI, blocked in code. Destructive actions require a typed confirmation. No calibration writes
+          are implemented yet; the policy gates them for when they are.
+        </p>
+        <div class="pill-row">
+          <span class="pill allow">✓ Engine ECU (0x7E0)</span>
+          <span class="pill allow">✓ Transmission ECU (0x7E1)</span>
+          <span class="pill deny">✗ Steering</span>
+          <span class="pill deny">✗ Brakes / ABS</span>
+          <span class="pill deny">✗ Airbags (SRS)</span>
+          <span class="pill deny">✗ ADAS</span>
+          <span class="pill deny">✗ Every other module</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="wrap">
+        <div class="kicker">Install</div>
+        <h2>Up in three steps</h2>
+        <p class="sub">Works immediately in simulation mode — no hardware needed. Add a J2534 adapter later for live
+          data.
+        </p>
+        <div class="steps">
+          <div class="step">
+            <div>
+              <b>Download &amp; run the installer</b>
+              <span>vw-diagnostics-setup.exe — standard Windows installer with desktop shortcut.</span>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <b>Open the app, press Start Monitor</b>
+              <span>The dashboard boots in simulated self-check mode so you can explore everything before plugging into
+                the truck.</span>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <b>Connect hardware when ready</b>
+              <span>A J2534 adapter (e.g. Scanmatik 2) + the app's Python monitor gives you live ECU reads — fault codes
+                and live channels. Flashing is not wired up: the app refuses the stock read until OEM security access
+                is available.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>Independent personal project. Not affiliated with or endorsed by Volkswagen AG. Vehicle manufacturer names
+        and
+        model designations are used for identification only.</p>
+      <p>Modifying ECU software may affect warranty, insurance, and emissions compliance. You are responsible for what
+        you flash. Always keep — and test — your stock backup.</p>
+    </div>
+  </footer>
 
 </body>
+
 </html>
