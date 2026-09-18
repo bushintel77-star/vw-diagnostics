@@ -3,6 +3,28 @@
 What to buy, install, and do the first time the laptop meets the truck
 (2018 Amarok 3.0 V6 TDI, DDXC / TDI550, Bosch EDC17CP54 + ZF 8HP70).
 
+**What this app does:** live data via UDS `0x22` (width-validated decode,
+DID probing, NRC `0x78` responsePending handled), fault codes via `0x19`
+with ISO 14229 status decode, clear codes via `0x14`, ECU identity via
+`0xF187`/`0xF189`/`0xF191`/`0xF18C`, and a post-flash health check.
+
+**What this app does not do:** it does not write to the ECU. Calibration
+changes are applied by boot-mode bench flashing — ECU on the bench,
+PCMFlash + PowerBox/boot cable driving BOOT/RESET/CNF1/GPT signals, CPU
+halted in the bootstrap loader so the security layer never loads, full
+~4 MB read, edit, flash back (PCMFlash corrects checksums). The
+`0x27`/`0x35`/`0x36`/`0x37`/`0x31` primitives in `uds.py` are tested
+protocol scaffolding, intentionally unwired; `0x34 RequestDownload` is
+deliberately absent. The app's role is diagnosis before the flash and
+health verification after it.
+
+**Verification status:** no real hardware has ever been connected. The
+J1979-mirror DIDs are correct against ISO 15031-5, but the
+manufacturer-specific candidates (`0xF4A3` boost, `0xF484` rail,
+`0xF4A1` pedal, `0xF448` battery) come from community tables unconfirmed
+on a DDXC ECU — the width-gated probe will reject wrong-width answers
+at first connect, but adoption still needs confirming on the vehicle.
+
 ## 1. The pass-thru device (the one purchase that matters)
 
 The app talks ISO 15765-4 (CAN 500 kbps) through a **J2534 pass-thru
@@ -28,18 +50,33 @@ Rules of thumb:
 pip install pyj2534
 ```
 
-Install the vendor driver so its J2534 DLL registers with Windows. The
-transport (`resources/uds.py`, `J2534Transport`) opens the first available
-device; enumeration via `listAvailiableDevices` is wired for when more than
-one DLL is registered.
+Install the vendor driver so its J2534 DLL registers with Windows
+(`HKLM\SOFTWARE\PassThruSupport.04.04`). The transport
+(`resources/uds.py`, `J2534Transport`) opens the first available
+device; enumeration via `listAvailiableDevices` is wired for when more
+than one DLL is registered.
+
+**The interpreter bitness must match the vendor DLL.** A 64-bit Python
+cannot load a 32-bit PassThru DLL, and a 32-bit installer registers
+under `WOW6432Node` where a 64-bit process can't see it. The Openport
+2.0 clones ship a 32-bit `op20pt32.dll` (clones can't take post-2016
+official drivers), so they need a **32-bit Python**: install one and
+point the app at it with the `VWD_PYTHON` environment variable
+(`PARSER_PYTHON` still works as a deprecated alias). On connect failure
+the monitor logs a preflight — interpreter bitness plus every PassThru
+registration in both registry views — and the error names which case
+you're in: `pyj2534` missing, nothing registered, a wrong-bitness DLL,
+or the driver refusing the open.
 
 ## 3. First-connect checklist (in order)
 
 1. **Ignition on, engine off** (terminal 15). Laptop on charger — a full
    flash read can take tens of minutes.
-2. Start the app, untick *Simulation mode*, Start Session.
-3. The monitor opens the device and falls back to simulation with a banner
-   if anything fails — the banner names the reason.
+2. Start the app, Start Session. (There is no simulation mode in the
+   shipped app — the fixture is test-only.)
+3. If the interface can't be opened the monitor reports the real reason
+   plus the preflight enumeration (see §2) — the error stays on screen
+   until the session is stopped.
 4. **DID probe** runs automatically (`dids` event): every dashboard channel
    shows the address the ECU actually answered. The diesel channels
    (rail/boost/pedal) try their candidate DIDs and adopt the first that
@@ -107,13 +144,28 @@ don't: flash baseline → log actual vs specified → revise → repeat).
 
 ## 6. Safety scope (unchanged, worth repeating)
 
-Reads and writes are hard-scoped to **Engine (0x7E0)** and **Transmission
-(0x7E1)**. Steering, brakes, SRS, ADAS are refused by the monitor before
-any transport call. Verification must pass against the factory envelope
-(700 Nm sustained ceiling — the ZF 8HP70 ladder) before any sign-off.
+All ECU access is hard-scoped to **Engine (0x7E0)** and the ZF 8HP70
+**Transmission (0x7E1)**. Steering, brakes/ABS, airbags/SRS and ADAS are
+refused by the monitor before any transport call — a deliberate,
+permanent scope, not a limitation to be lifted. The post-flash health
+check reports `pass` only when checks actually evaluated real ECU data
+(fresh DTC read, live channels within limits, plausible samples); with
+no vehicle data it reports `inconclusive`, never a vacuous pass.
+
+The DPF/EGR/SCR catalog entries are **off-road use only** — removing
+emissions equipment has UK MOT and insurance consequences. The app plans
+these for the external bench flash; it never applies them itself.
 
 ## 7. Known-unverified (from the calibration research — treat as open)
 
+- **No real hardware has ever been connected.** Everything above the
+  J2534 boundary is selftested offline; first connect is the first real
+  test of the whole read path.
+- **Manufacturer-specific DIDs are community tables.** The J1979-mirror
+  DIDs match ISO 15031-5, but `0xF4A3` boost, `0xF484` rail, `0xF4A1`
+  pedal and `0xF448` battery are unconfirmed on a DDXC — the width-gated
+  probe rejects wrong-width answers, but adoption still needs
+  confirming on the vehicle.
 - **ZF 8HP70 transient factor:** 700 Nm is the continuous rating; the
   10-second 710 Nm overboost rides an unpublished safety factor. Community
   data suggests >750 Nm holds with line-pressure work; no OEM document
@@ -129,7 +181,9 @@ any transport call. Verification must pass against the factory envelope
 
 | Symptom | Cause / fix |
 |---|---|
-| "pyj2534 is not installed" | `pip install pyj2534`; vendor DLL not registered |
+| "pyj2534 is not installed" | `pip install pyj2534` in the monitor's interpreter (VWD_PYTHON) |
+| "registered only in the 32-bit registry view" | 32-bit vendor DLL (Openport clone) under a 64-bit Python — install a 32-bit Python, set `VWD_PYTHON` |
+| "No J2534 PassThru device is registered" | Vendor J2534 driver not installed — install it, check the preflight log lines |
 | Connects, no DID answers | Wrong pins — the Amarok uses pins 6/14 for CAN; check the adapter |
 | VIN reads, rail/boost/pedal missing | Candidate DIDs didn't answer — update `DID_CANDIDATES` from label data |
 | Reads drop under load | Budget cable — lower `LIVE_INTERVAL_S`, or replace device |

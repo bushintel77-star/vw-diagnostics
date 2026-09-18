@@ -20,6 +20,7 @@ Layers:
 Run `python uds.py --selftest` to exercise the pure protocol layer offline.
 """
 
+import struct
 import sys
 
 REQUEST_ID = 0x7E0
@@ -420,6 +421,118 @@ def probe_candidates(client, channel: str) -> tuple[tuple | None, list[dict]]:
 
 
 # ---------------------------------------------------------------------------
+# J2534 device discovery / preflight
+#
+# PassThru devices register under HKLM\SOFTWARE\PassThruSupport.04.04\<Vendor>
+# with a FunctionLibrary value naming the vendor DLL. A 32-bit installer —
+# the Openport 2.0 clone's op20pt32.dll is 32-bit and cannot take newer
+# official drivers — lands in the 32-bit (WOW6432Node) view, which a 64-bit
+# process cannot load and does not even see in its own view. That mismatch,
+# not a missing cable, is the most common "device not found".
+# ---------------------------------------------------------------------------
+
+PASSTHRU_KEY = r"SOFTWARE\PassThruSupport.04.04"
+
+
+def python_bitness() -> int:
+    """Pointer width of the running interpreter (64 or 32). A process can
+    only load a PassThru DLL of its own bitness."""
+    return struct.calcsize("P") * 8
+
+
+def passthru_registrations() -> list[dict]:
+    """Enumerate registered J2534 PassThru devices from BOTH registry
+    views: [{view, name, dll}]. `view` is "64-bit" or "32-bit" — the
+    KEY_WOW64_* flags select the view regardless of this process's own
+    bitness (the documented mechanism; the WOW6432Node path itself is an
+    implementation detail). Read-only — returns [] off Windows or on any
+    registry error so a missing/unreadable key degrades gracefully."""
+    devices = []
+    try:
+        import winreg
+    except ImportError:
+        return devices
+    for view, flag in (("64-bit", winreg.KEY_WOW64_64KEY),
+                       ("32-bit", winreg.KEY_WOW64_32KEY)):
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, PASSTHRU_KEY,
+                                0, winreg.KEY_READ | flag) as root:
+                index = 0
+                while True:
+                    try:
+                        vendor = winreg.EnumKey(root, index)
+                    except OSError:
+                        break
+                    index += 1
+                    name, dll = vendor, ""
+                    try:
+                        with winreg.OpenKey(root, vendor) as entry:
+                            name = (winreg.QueryValueEx(entry, "Name")[0]
+                                    or vendor)
+                            dll = winreg.QueryValueEx(
+                                entry, "FunctionLibrary")[0]
+                    except OSError:
+                        pass
+                    if not any(d["name"] == name and d["dll"] == dll
+                               for d in devices):
+                        devices.append({"view": view, "name": name, "dll": dll})
+        except OSError:
+            continue
+    return devices
+
+
+def describe_passthru_setup() -> list[str]:
+    """Log lines for the monitor: what this interpreter can see of the
+    J2534 install — its own bitness and every registered PassThru DLL."""
+    lines = [f"{python_bitness()}-bit interpreter"]
+    devices = passthru_registrations()
+    if not devices:
+        lines.append("no J2534 PassThru registrations found in either "
+                     "registry view")
+    for d in devices:
+        lines.append(f"{d['view']} registry view: {d['name']}"
+                     + (f" -> {d['dll']}" if d["dll"]
+                        else " (no FunctionLibrary path)"))
+    return lines
+
+
+def passthru_open_error(cause: Exception) -> str:
+    """Explain a J2534()/passThruOpen failure from what the registry
+    actually shows — 'no driver installed', 'right driver, wrong
+    interpreter bitness', and 'driver present but refused' are different
+    problems with different fixes."""
+    bitness = python_bitness()
+    devices = passthru_registrations()
+    ours = "64-bit" if bitness == 64 else "32-bit"
+    visible = [d for d in devices if d["view"] == ours]
+    hidden = [d for d in devices if d["view"] != ours]
+    if not devices:
+        return (f"J2534 open failed: {cause}. No J2534 PassThru device is "
+                f"registered in either registry view "
+                f"(HKLM\\{PASSTHRU_KEY}) — install the interface vendor's "
+                f"J2534 driver.")
+    if hidden and not visible:
+        hidden_names = ", ".join(
+            f"{d['name']} ({d['dll'] or 'no DLL path'})" for d in hidden)
+        return (f"J2534 open failed: {cause}. PassThru device(s) are "
+                f"registered only in the {hidden[0]['view']} registry view: "
+                f"{hidden_names} — a {bitness}-bit interpreter cannot load a "
+                f"{hidden[0]['view']} DLL. Install a {hidden[0]['view']} "
+                f"Python and point VWD_PYTHON at it (see HARDWARE.md).")
+    visible_names = ", ".join(
+        f"{d['name']} ({d['dll'] or 'no DLL path'})" for d in visible)
+    msg = (f"J2534 open failed: {cause}. PassThru device(s) registered for "
+           f"this interpreter: {visible_names} — the driver refused the "
+           f"open; check the interface is connected, powered, and not "
+           f"already claimed by another application.")
+    if hidden:
+        hidden_names = ", ".join(d["name"] for d in hidden)
+        msg += (f" ({hidden[0]['view']}-view registration(s) also exist — "
+                f"{hidden_names} — unusable by a {bitness}-bit process.)")
+    return msg
+
+
+# ---------------------------------------------------------------------------
 # J2534 pass-thru transport (requires pyj2534 + vendor DLL + device)
 # ---------------------------------------------------------------------------
 
@@ -442,21 +555,34 @@ class J2534Transport:
             import pyj2534
         except ImportError as exc:
             raise TransportError(
-                "pyj2534 is not installed (pip install pyj2534) and/or the "
-                "vendor J2534 DLL is not registered"
+                "pyj2534 is not installed — run `pip install pyj2534` in "
+                "the interpreter the monitor runs under (the VWD_PYTHON "
+                "override, see HARDWARE.md)"
             ) from exc
-        self._lib = pyj2534.J2534()
-        # TODO: enumerate with listAvailiableDevices when multiple DLLs exist
-        self._device = self._lib.passThruOpen(self.device_name)
+        try:
+            self._lib = pyj2534.J2534()
+            # TODO: enumerate with listAvailiableDevices when multiple
+            # DLLs are registered
+            self._device = self._lib.passThruOpen(self.device_name)
+        except Exception as exc:
+            # 'No device', 'wrong-bitness DLL' and 'driver refused' look
+            # identical from here — the registry view is what separates
+            # them, so the message names the actual cause.
+            raise TransportError(passthru_open_error(exc)) from exc
         protocol = pyj2534.ISO15765
         flags = pyj2534.ISO15765_FRAME_PAD
-        self._channel = self._lib.passThruConnect(self._device, protocol, flags, bitrate)
-        self._lib.passThruStartMsgFilter(
-            self._channel,
-            filter_type=pyj2534.FLOW_CONTROL_FILTER,
-            mask_id=self.response_id_needed(),
-            pattern_id=self.request_id,
-        )
+        try:
+            self._channel = self._lib.passThruConnect(
+                self._device, protocol, flags, bitrate)
+            self._lib.passThruStartMsgFilter(
+                self._channel,
+                filter_type=pyj2534.FLOW_CONTROL_FILTER,
+                mask_id=self.response_id_needed(),
+                pattern_id=self.request_id,
+            )
+        except Exception as exc:
+            self.close()
+            raise TransportError(f"J2534 channel setup failed: {exc}") from exc
 
     def response_id_needed(self) -> int:
         return self.response_id

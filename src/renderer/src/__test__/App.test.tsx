@@ -544,6 +544,12 @@ describe("Testing the VW diagnostic dashboard", () => {
       "data-state",
       "off"
     );
+    // Lamps off with a stored code is NOT all-clear: the caption names the
+    // stored faults instead of claiming "no active warnings".
+    expect(screen.queryByText(/no active warnings/i)).toBeNull();
+    expect(
+      screen.getByText(/No tell-tales lit — 1 fault code below/i)
+    ).toBeVisible();
 
     await act(async () => {
       dashboardListener()({

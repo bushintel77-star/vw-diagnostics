@@ -49,12 +49,16 @@ interface PythonCandidate {
   args: string[];
 }
 
-// Monitor interpreter resolution: PARSER_PYTHON override, then the
-// usual interpreter names per platform.
+// Monitor interpreter resolution: VWD_PYTHON override (the J2534 DLL
+// bitness must match the interpreter — a 32-bit vendor DLL needs a
+// 32-bit Python). PARSER_PYTHON is the deprecated alias from before the
+// monitor had its own name; it still works. Then the usual interpreter
+// names per platform.
 function pythonCandidates(): PythonCandidate[] {
   const candidates: PythonCandidate[] = [];
-  if (process.env.PARSER_PYTHON) {
-    candidates.push({ command: process.env.PARSER_PYTHON, args: [] });
+  const override = process.env.VWD_PYTHON ?? process.env.PARSER_PYTHON;
+  if (override) {
+    candidates.push({ command: override, args: [] });
   }
   if (process.platform === "win32") {
     candidates.push(
@@ -231,7 +235,7 @@ export async function startDiagnostic(
       });
     }
     // EPIPE if the monitor exits between a command write and delivery.
-    proc.stdin?.on("error", () => {});
+    proc.stdin?.on("error", () => { });
     proc.on("close", (code) => {
       if (child === proc) {
         child = null;
@@ -267,7 +271,7 @@ export async function startDiagnostic(
   return {
     started: false,
     message:
-      "No Python interpreter found. Install Python 3 or set PARSER_PYTHON to the interpreter path.",
+      "No Python interpreter found. Install Python 3 or set VWD_PYTHON to the interpreter path.",
   };
 }
 

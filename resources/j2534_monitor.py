@@ -919,6 +919,11 @@ def open_real_transport():
         device = uds.J2534Transport()
         device.open()
     except uds.TransportError as exc:
+        # Log what the preflight actually found — interpreter bitness and
+        # every registered PassThru DLL in both registry views — so the
+        # event stream alone explains why the open failed.
+        for line in uds.describe_passthru_setup():
+            emit(log(f"J2534 preflight: {line}"))
         raise RuntimeError(str(exc)) from exc
     client = uds.UdsClient(device)
     # One responsePending is normal; two means the channel is genuinely
@@ -1527,6 +1532,77 @@ def _selftest_writes(fixture) -> int:
         finally:
             _uds_mod.UdsClient = saved_client
             _uds_mod.J2534Transport = saved_transport
+
+        # --- J2534 preflight: honest 'why won't it open' diagnostics ---
+        # Registry access and the pyj2534 module are stubbed; no real
+        # hardware or registry is needed.
+        import types as _types
+
+        def _failing_pyj2534(error: str):
+            mod = _types.ModuleType("pyj2534")
+            mod.ISO15765 = 6
+            mod.ISO15765_FRAME_PAD = 0x40
+            mod.FLOW_CONTROL_FILTER = 0x03
+
+            class _Lib:
+                def passThruOpen(self, _name):
+                    raise OSError(error)
+            mod.J2534 = _Lib
+            return mod
+
+        def _open_error() -> str:
+            try:
+                _uds_mod.J2534Transport().open()
+            except _uds_mod.TransportError as exc:
+                return str(exc)
+            return ""
+
+        saved_regs = _uds_mod.passthru_registrations
+        saved_pyj = sys.modules.get("pyj2534")
+        had_pyj = "pyj2534" in sys.modules
+        try:
+            # (b) Nothing registered in either registry view.
+            _uds_mod.passthru_registrations = lambda: []
+            sys.modules["pyj2534"] = _failing_pyj2534("STATUS_ERR_NO_DEVICE")
+            msg = _open_error()
+            checks.append(("preflight: nothing registered says so",
+                           "No J2534 PassThru device is registered" in msg))
+
+            # (c) Registrations only in the OTHER bitness view — the
+            # Openport-clone case: the message must name the bitness fix.
+            other = "32-bit" if _uds_mod.python_bitness() == 64 else "64-bit"
+            _uds_mod.passthru_registrations = lambda: [{
+                "view": other, "name": "Openport 2.0 clone",
+                "dll": r"C:\vendor\op20pt32.dll"}]
+            msg = _open_error()
+            checks.append(("preflight: wrong-bitness DLL names the fix",
+                           other in msg and "VWD_PYTHON" in msg
+                           and "Openport 2.0 clone" in msg))
+
+            # (d) Registered in our view but the open still fails — the
+            # underlying driver error must surface, not be swallowed.
+            ours = f"{_uds_mod.python_bitness()}-bit"
+            _uds_mod.passthru_registrations = lambda: [
+                {"view": ours, "name": "MongoosePro",
+                 "dll": r"C:\vendor\mongoose.dll"}]
+            sys.modules["pyj2534"] = _failing_pyj2534("ERR_DEVICE_NOT_CONNECTED")
+            msg = _open_error()
+            checks.append(("preflight: registered device surfaces driver error",
+                           "ERR_DEVICE_NOT_CONNECTED" in msg
+                           and "MongoosePro" in msg))
+
+            # (a) pyj2534 itself is not importable — None in sys.modules
+            # makes the import raise ImportError.
+            sys.modules["pyj2534"] = None
+            msg = _open_error()
+            checks.append(("preflight: missing pyj2534 names the package",
+                           "pyj2534" in msg and "pip install" in msg))
+        finally:
+            _uds_mod.passthru_registrations = saved_regs
+            if had_pyj:
+                sys.modules["pyj2534"] = saved_pyj
+            else:
+                sys.modules.pop("pyj2534", None)
     finally:
         globals()["emit"] = real_emit
 

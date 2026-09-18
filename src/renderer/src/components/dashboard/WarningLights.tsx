@@ -276,7 +276,11 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
             ? "Red = stop safely · amber = caution / service · blue = engine cold"
             : codes === null || live === null
               ? "No data — connect an interface and start a session"
-              : "All tell-tales off — no active warnings"}
+              : codes.length > 0
+                /* Lamps off is not all-clear while the ECU reports codes —
+                   it only means none are requesting a tell-tale. */
+                ? `No tell-tales lit — ${codes.length} fault code${codes.length === 1 ? "" : "s"} below`
+                : "All tell-tales off — no active warnings"}
         </p>
       </CardContent>
     </Card>
