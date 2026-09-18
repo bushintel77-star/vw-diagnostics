@@ -9,9 +9,23 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
 
 const LIVE_PORT = 5175;
 const VITE_PORT = 5174;
+
+// Per-run bearer token. The mutating endpoints require it via X-Live-Token;
+// /status serves it to the vite dev page (the only CORS-trusted origins).
+// This guards against malicious web pages: a cross-origin site cannot read
+// the token response (no ACAO) nor send the header without a preflight the
+// allowlist rejects. It is NOT a general access control — any local process
+// can read /status directly, which is fine for a dev-only bridge bound to
+// loopback.
+const LIVE_TOKEN = randomUUID();
+const ALLOWED_ORIGINS = new Set([
+  `http://localhost:${VITE_PORT}`,
+  `http://127.0.0.1:${VITE_PORT}`,
+]);
 
 /** @type {import("node:child_process").ChildProcess | null} */
 let monitor = null;
@@ -95,16 +109,28 @@ function readBody(req) {
   });
 }
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-  // Chromium Private Network Access opt-in for direct (non-proxied) requests.
-  "Access-Control-Allow-Private-Network": "true",
-};
+// CORS is an explicit allowlist, not a wildcard: echo the request Origin only
+// for the vite dev origins; absent or unlisted origins get no ACAO at all.
+function corsHeaders(req) {
+  const headers = {
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,X-Live-Token",
+    Vary: "Origin",
+  };
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return headers;
+}
+
+function authorized(req) {
+  return req.headers["x-live-token"] === LIVE_TOKEN;
+}
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${LIVE_PORT}`);
+  const CORS = corsHeaders(req);
   if (req.method === "OPTIONS") {
     res.writeHead(204, CORS);
     return res.end();
@@ -112,7 +138,7 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/status") {
     res.writeHead(200, { ...CORS, "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ running: monitor !== null }));
+    return res.end(JSON.stringify({ running: monitor !== null, token: LIVE_TOKEN }));
   }
 
   if (req.method === "GET" && url.pathname === "/events") {
@@ -128,6 +154,11 @@ const server = createServer(async (req, res) => {
     sseClients.add(res);
     req.on("close", () => sseClients.delete(res));
     return;
+  }
+
+  if (req.method === "POST" && ["/start", "/stop", "/command"].includes(url.pathname) && !authorized(req)) {
+    res.writeHead(403, { ...CORS, "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ ok: false, message: "Forbidden: missing or invalid X-Live-Token." }));
   }
 
   if (req.method === "POST" && url.pathname === "/start") {
@@ -163,6 +194,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(LIVE_PORT, "127.0.0.1", () => {
   console.log(`[live] monitor bridge on http://127.0.0.1:${LIVE_PORT}`);
+  console.log(`[live] session token: ${LIVE_TOKEN}`);
 });
 
 // Run vite alongside and tear everything down together.

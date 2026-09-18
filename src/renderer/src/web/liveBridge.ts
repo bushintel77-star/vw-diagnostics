@@ -22,11 +22,16 @@ let liveActive = false;
 
 export const isBrowserLive = (): boolean => liveActive;
 
-async function post(base: string, path: string, body: unknown): Promise<Response | null> {
+async function post(
+  base: string,
+  path: string,
+  body: unknown,
+  token: string
+): Promise<Response | null> {
   try {
     const response = await fetch(base + path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Live-Token": token },
       body: JSON.stringify(body),
     });
     return response;
@@ -41,6 +46,9 @@ async function tryLiveBridge(): Promise<boolean> {
     return false;
   }
   let base: string | null = null;
+  // The bridge mints a per-run token and serves it via /status; mutating
+  // endpoints require it as X-Live-Token.
+  let token = "";
   for (const candidate of LIVE_BASES) {
     try {
       const probe = await fetch(candidate + "/status", {
@@ -50,6 +58,9 @@ async function tryLiveBridge(): Promise<boolean> {
             : undefined,
       });
       if (probe.ok) {
+        const status = (await probe.json()) as { token?: unknown };
+        if (typeof status.token !== "string") continue;
+        token = status.token;
         base = candidate;
         break;
       }
@@ -86,14 +97,14 @@ async function tryLiveBridge(): Promise<boolean> {
     runParser: () =>
       Promise.resolve({ ok: true, result: null, stdout: "", stderr: "", exitCode: 0, durationMs: 0 }),
     startDiagnostic: async (options: StartDiagnosticOptions): Promise<DiagnosticSessionResult> => {
-      const response = await post(base, "/start", options);
+      const response = await post(base, "/start", options, token);
       if (!response) {
         return { started: false, message: "Live server unreachable." };
       }
       return response.json();
     },
     stopDiagnostic: async (): Promise<DiagnosticSessionResult> => {
-      const response = await post(base, "/stop", {});
+      const response = await post(base, "/stop", {}, token);
       if (!response) {
         return { started: false, message: "Live server unreachable." };
       }
@@ -102,7 +113,7 @@ async function tryLiveBridge(): Promise<boolean> {
     sendDiagnosticCommand: async (
       command: DiagnosticCommand
     ): Promise<DiagnosticCommandResult> => {
-      const response = await post(base, "/command", command);
+      const response = await post(base, "/command", command, token);
       if (!response) {
         return { ok: false, message: "Live server unreachable." };
       }
@@ -126,7 +137,7 @@ async function tryLiveBridge(): Promise<boolean> {
   };
 
   // Viewer convenience: start a simulated-transport session on the real monitor.
-  void post(base, "/start", { simulate: true });
+  void post(base, "/start", { simulate: true }, token);
   return true;
 }
 
