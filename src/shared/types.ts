@@ -229,9 +229,16 @@ export interface FactoryEnvelope {
 
 export type DutyProfile = "standard" | "no_tow";
 
+/** Sign-off outcome: "pass" means applied work was verified against ECU
+ * evidence this session; "inconclusive" means nothing substantive was
+ * evaluated (the normal state — this app never writes); "fail" means a
+ * check actually failed. Never collapse to a boolean — "not verified"
+ * is not a pass. */
+export type VerificationVerdict = "pass" | "fail" | "inconclusive";
+
 export interface DiagnosticVerificationEvent {
   type: "verification";
-  passed: boolean;
+  verdict: VerificationVerdict;
   items: VerificationItem[];
   timestamp: string;
   /** Where the inputs came from: re-read from the ECU, or the test-fixture

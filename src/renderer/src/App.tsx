@@ -186,7 +186,13 @@ const App = () => {
           break;
         case "verification":
           setVerification(event);
-          pushLog(`Sign-off verification ${event.passed ? "PASSED" : "FAILED"}.`);
+          pushLog(
+            `Sign-off verification ${
+              { pass: "PASSED", fail: "FAILED", inconclusive: "NOT VERIFIED" }[
+                event.verdict
+              ]
+            }.`
+          );
           break;
         case "log":
           pushLog(event.message);

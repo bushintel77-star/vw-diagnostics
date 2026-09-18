@@ -1,4 +1,4 @@
-import { ShieldCheck, ShieldX } from "lucide-react";
+import { ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 import { DiagnosticVerificationEvent, VerificationItem } from "@shared/types";
 
 import { Badge } from "@/components/ui/badge";
@@ -40,14 +40,29 @@ const VerificationCard = ({
   <Card>
     <CardHeader>
       <CardTitle className="flex flex-wrap items-center gap-2">
-        {verification.passed ? (
+        {verification.verdict === "pass" ? (
           <ShieldCheck className="size-4 text-chart-2" />
-        ) : (
+        ) : verification.verdict === "fail" ? (
           <ShieldX className="size-4 text-destructive" />
+        ) : (
+          <ShieldAlert className="size-4 text-muted-foreground" />
         )}
         Sign-off Verification
-        <Badge variant={verification.passed ? "secondary" : "destructive"}>
-          {verification.passed ? "PASSED" : "FAILED"}
+        <Badge
+          variant={
+            verification.verdict === "pass"
+              ? "secondary"
+              : verification.verdict === "fail"
+                ? "destructive"
+                : "outline"
+          }
+          className={verification.verdict === "inconclusive" ? "text-muted-foreground" : ""}
+        >
+          {verification.verdict === "pass"
+            ? "PASSED"
+            : verification.verdict === "fail"
+              ? "FAILED"
+              : "NOT VERIFIED"}
         </Badge>
         {verification.source && (
           <Badge

@@ -281,9 +281,36 @@ describe("Testing the VW diagnostic dashboard", () => {
 
   test("renders the sign-off verification checklist", () => {
     expect(screen.getByText("Sign-off Verification")).toBeVisible();
-    expect(screen.getByText(/^PASSED$/)).toBeVisible();
+    // Nothing was applied by this app — the verdict is inconclusive, and
+    // "PASSED" must not appear: it would read as a verified tune.
+    expect(screen.getByText("NOT VERIFIED")).toBeVisible();
+    expect(screen.queryByText(/^PASSED$/)).toBeNull();
+    expect(screen.queryByText(/^FAILED$/)).toBeNull();
     expect(screen.getByText("No new fault codes introduced")).toBeVisible();
     expect(screen.getByText(/Applied state read-back/i)).toBeVisible();
+  });
+
+  test("a pass verdict renders PASSED and a fail verdict renders FAILED", async () => {
+    const base = {
+      type: "verification" as const,
+      source: "ecu" as const,
+      dutyProfile: "Standard (tow-capable)",
+      items: [
+        { check: "No new fault codes introduced", status: "pass" as const, detail: "0 known code(s), none new this session" },
+      ],
+      timestamp: "2026-08-15T03:00:02.000Z",
+    };
+
+    await act(async () => {
+      dashboardListener()({ ...base, verdict: "fail" });
+    });
+    expect(screen.getByText(/^FAILED$/)).toBeVisible();
+
+    await act(async () => {
+      dashboardListener()({ ...base, verdict: "pass" });
+    });
+    expect(screen.getByText(/^PASSED$/)).toBeVisible();
+    expect(screen.queryByText("NOT VERIFIED")).toBeNull();
   });
 
   test("Verify & Sign Off sends the command once a session is running", async () => {
@@ -335,11 +362,11 @@ describe("Testing the VW diagnostic dashboard", () => {
     expect(
       screen.getByText(/550 stock · 580 VW transient · 620 single-turbo Audi/i)
     ).toBeVisible();
-    // An un-run pull check is SKIP, not a fake PASS — and so is the
-    // "changes applied" check, since this app never writes
-    expect(screen.getAllByText(/^SKIP$/).length).toBeGreaterThanOrEqual(2);
+    // Checks that evaluated nothing are SKIP, not a fake PASS — no deletes
+    // active, nothing applied, and this app never writes
+    expect(screen.getAllByText(/^SKIP$/).length).toBeGreaterThanOrEqual(3);
     expect(
-      screen.getByText(/no dyno pull this session — run one before sign-off/i)
+      screen.getByText(/no deletes active — nothing to check/i)
     ).toBeVisible();
     expect(
       screen.getByText(/Calibration changes applied this session/i)

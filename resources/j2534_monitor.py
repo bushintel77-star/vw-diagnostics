@@ -275,6 +275,7 @@ class StreamTracker:
         self._logged: set = set()
         self.rejected = 0
         self.rejected_channels: set = set()
+        self.seen = 0  # live samples processed — 0 means the stream never ran
 
     def _new_channel(self) -> dict:
         return {
@@ -297,6 +298,7 @@ class StreamTracker:
             }
 
     def update(self, values: dict) -> None:
+        self.seen += 1
         for name, value in values.items():
             # Range plausibility: physically impossible values are rejected.
             bounds = PLAUSIBLE.get(name)
@@ -510,17 +512,6 @@ FACTORY_ENVELOPE = {
 }
 
 
-def _pull_envelope(pull: dict) -> tuple[float, float]:
-    """(peak, sustained) torque from a pull event: peak is the max sample;
-    sustained is the median of the plateau (samples within 5% of peak)."""
-    samples = pull.get("samples", [])
-    if not samples:
-        return 0.0, 0.0
-    peak = max(s["torqueNm"] for s in samples)
-    plateau = sorted(s["torqueNm"] for s in samples if s["torqueNm"] >= peak * 0.95)
-    sustained = plateau[len(plateau) // 2] if plateau else peak
-    return peak, sustained
-
 
 def run_verification(transport, active_deletions: set, active_mods: set,
                      tracker: StreamTracker, session: dict,
@@ -554,10 +545,11 @@ def run_verification(transport, active_deletions: set, active_mods: set,
     leaking = sorted(suppressed & current)
     items.append({
         "check": "Coded-out codes suppressed",
-        "status": "fail" if leaking else "pass",
+        # No active deletes means nothing was checked — skip, not a pass.
+        "status": "fail" if leaking else ("pass" if suppressed else "skipped"),
         "detail": f"still reporting: {', '.join(leaking)}" if leaking
         else f"{len(suppressed)} code(s) suppressed by active deletes" if suppressed
-        else "no deletes active",
+        else "no deletes active — nothing to check",
     })
 
     # Live mode re-reads the channels straight from the ECU instead of
@@ -571,30 +563,35 @@ def run_verification(transport, active_deletions: set, active_mods: set,
                 breaches.append(f"{name}={v}")
     items.append({
         "check": "Live channels within limits",
-        "status": "fail" if (breaches or not values) else "pass",
+        # Absence of data is absence — skipped, never a pass or a fail.
+        "status": "fail" if breaches else ("pass" if values else "skipped"),
         "detail": ", ".join(breaches) if breaches
         else "all channels plausible" if values
-        else "no live data received",
+        else "no live data received — nothing evaluated",
     })
 
     coolant = values.get("coolantTempC") if values else None
     items.append({
         "check": f"Coolant within duty-profile limit ({profile['coolantMaxC']:.0f} °C)",
-        "status": "fail" if (coolant is not None and coolant > profile["coolantMaxC"]) else "pass",
+        "status": "fail" if (coolant is not None and coolant > profile["coolantMaxC"])
+        else ("pass" if coolant is not None else "skipped"),
         "detail": f"{profile['label']}: {profile['note']}"
         + (f" Now: {coolant} °C." if coolant is not None else " No coolant reading."),
     })
 
     items.append({
         "check": "No rejected implausible samples",
-        "status": "fail" if tracker.rejected > 5 else "pass",
+        "status": "fail" if tracker.rejected > 5
+        else ("pass" if tracker.seen else "skipped"),
         "detail": f"{tracker.rejected} sample(s) rejected"
-        + (f" on {', '.join(sorted(tracker.rejected_channels))}" if tracker.rejected_channels else ""),
+        + (f" on {', '.join(sorted(tracker.rejected_channels))}" if tracker.rejected_channels else "")
+        + ("" if tracker.seen else " — stream produced no samples"),
     })
 
     items.append({
         "check": "Applied state read-back",
-        "status": "pass",
+        # A pass for confirming nothing was applied is a tick for nothing.
+        "status": "pass" if (active_mods or active_deletions) else "skipped",
         "detail": (f"{len(active_mods)} mod(s) + {len(active_deletions)} delete(s) active and consistent"
                    if (active_mods or active_deletions) else "stock coding — nothing applied"),
     })
@@ -611,38 +608,26 @@ def run_verification(transport, active_deletions: set, active_mods: set,
                    f"{len(active_mods)} mod(s) + {len(active_deletions)} delete(s) applied"),
     })
 
-    # Factory-envelope check: the torque the tune actually makes must sit
-    # inside the manufacturer ladder — this is the "tune to the standard"
-    # rule made enforceable.
+    # The manufacturer-standard envelope stays on the card as reference
+    # (the ceilings and ladder are hand-authored data the user values).
+    # The measured-torque check was removed with the pull command — nothing
+    # populates last_pull, so it could only ever skip. It returns when a
+    # real torque-logging path exists; measured values stay None, honestly.
     envelope = dict(FACTORY_ENVELOPE)
-    last_pull = session.get("last_pull")
-    if not last_pull:
-        items.append({
-            "check": "Torque within factory envelope",
-            "status": "skipped",
-            "detail": "no dyno pull this session — run one before sign-off",
-        })
-        envelope["peakTorqueNm"] = None
-        envelope["sustainedTorqueNm"] = None
-    else:
-        peak, sustained = _pull_envelope(last_pull)
-        envelope["peakTorqueNm"] = round(peak, 1)
-        envelope["sustainedTorqueNm"] = round(sustained, 1)
-        ok = peak <= envelope["ceilingPeakNm"] and sustained <= envelope["ceilingSustainedNm"]
-        items.append({
-            "check": "Torque within factory envelope",
-            "status": "pass" if ok else "fail",
-            "detail": (f"peak {peak:.0f} Nm / sustained {sustained:.0f} Nm vs ceilings "
-                       f"{envelope['ceilingPeakNm']:.0f} / {envelope['ceilingSustainedNm']:.0f} Nm "
-                       f"({envelope['ladder']})"),
-        })
+    envelope["peakTorqueNm"] = None
+    envelope["sustainedTorqueNm"] = None
 
-    # Skipped checks (nothing applied, no pull measured) are honest absence,
-    # not failure — only an actual fail blocks sign-off.
-    passed = all(item["status"] != "fail" for item in items)
+    # Three-state verdict — sign-off verifies the session's applied work
+    # against ECU evidence. This app never writes, so with nothing applied
+    # there is no work to verify: health-scan passes with no work behind
+    # them are not a sign-off. "pass" requires applied work evaluated this
+    # session; otherwise the honest verdict is inconclusive, never PASSED.
+    fails = any(item["status"] == "fail" for item in items)
+    substantive = applied > 0 and any(item["status"] == "pass" for item in items)
+    verdict = "fail" if fails else ("pass" if substantive else "inconclusive")
     return {
         "type": "verification",
-        "passed": passed,
+        "verdict": verdict,
         "items": items,
         "timestamp": now_iso(),
         "source": source,
@@ -931,11 +916,15 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
             duty = "standard"
         verification = run_verification(transport, active_deletions, active_mods,
                                         tracker, session, duty)
-        verdict = "PASSED" if verification["passed"] else "FAILED"
+        verdict_label = {"pass": "PASSED", "fail": "FAILED",
+                         "inconclusive": "NOT VERIFIED"}[verification["verdict"]]
         origin = "re-read from ECU" if verification["source"] == "ecu" else "simulated self-check"
-        emit(log(f"Sign-off verification {verdict} ({origin}, {verification['dutyProfile']}) — "
-                 f"{sum(1 for i in verification['items'] if i['status'] == 'pass')}"
-                 f"/{len(verification['items'])} checks passed."))
+        passed_n = sum(1 for i in verification["items"] if i["status"] == "pass")
+        failed_n = sum(1 for i in verification["items"] if i["status"] == "fail")
+        skipped_n = sum(1 for i in verification["items"] if i["status"] == "skipped")
+        emit(log(f"Sign-off verification {verdict_label} ({origin}, {verification['dutyProfile']}) — "
+                 f"{passed_n} passed, {failed_n} failed, {skipped_n} skipped "
+                 f"of {len(verification['items'])} checks."))
         emit(verification)
         return
 
@@ -1225,8 +1214,11 @@ class _NonWritableProbe:
         "mode) — this app plans and verifies them, it does not write"
     )
 
+    def __init__(self, dtcs: list | None = None):
+        self._dtcs = dtcs or []
+
     def read_dtcs(self) -> list:
-        return []
+        return list(self._dtcs)
 
     def sample(self, _t: float) -> dict:
         return {}
@@ -1286,12 +1278,34 @@ def _selftest_writes(fixture) -> int:
         checks.append(("writable transport applies the mod", "pedal_map" in f_mods))
 
         captured.clear()
-        # Sign-off must state plainly that this app applied nothing.
+        # Sign-off must state plainly that this app applied nothing, and
+        # must not announce PASSED for a session that verified no work.
         verdict = run_verification(probe, set(), set(), StreamTracker(warmup=4), session)
         item = next((i for i in verdict["items"]
                      if i["check"] == "Calibration changes applied this session"), None)
         checks.append(("verification marks no-apply explicitly",
                        item is not None and item["status"] == "skipped"))
+        checks.append(("no applied work + no fails is inconclusive, not pass",
+                       verdict["verdict"] == "inconclusive"))
+
+        # A fail always wins over skips.
+        failing = run_verification(
+            _NonWritableProbe(dtcs=[{"code": "P1234", "status": "Stored"}]),
+            set(), set(), StreamTracker(warmup=4), session)
+        checks.append(("any fail yields a fail verdict", failing["verdict"] == "fail"))
+
+        # Applied work evaluated against the transport can genuinely pass —
+        # the verdict is not permanently inconclusive.
+        v_deletions: set = set()
+        v_mods: set = set()
+        v_session = {"baseline_codes": {d["code"] for d in fixture.read_dtcs()},
+                     "last_values": None}
+        handle_command({"cmd": "delete_component", "componentId": "egr"},
+                       fixture, v_deletions, v_mods, tracker, "", v_session)
+        passing = run_verification(fixture, v_deletions, v_mods,
+                                   StreamTracker(warmup=4), v_session)
+        checks.append(("applied work evaluated cleanly yields pass",
+                       passing["verdict"] == "pass"))
     finally:
         globals()["emit"] = real_emit
 
