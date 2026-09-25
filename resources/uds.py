@@ -20,24 +20,10 @@ Layers:
 Run `python uds.py --selftest` to exercise the pure protocol layer offline.
 """
 
-import struct
 import sys
 
 REQUEST_ID = 0x7E0
 RESPONSE_ID = 0x7E8
-# TCU (ZF 8HP70): ODIS LL_TransContrModulUDS pair — request 0x7E1,
-# response 0x7E9. One ECU pair per transport instance; the engine pair
-# (LL_EnginContrModul1UDS) stays the default.
-TCU_REQUEST_ID = 0x7E1
-TCU_RESPONSE_ID = 0x7E9
-
-# ISO 14229: while an ECU works on a request it may answer 0x7F <sid>
-# 0x78 (requestCorrectlyReceived-ResponsePending) — a keep-alive, not an
-# error. VAG ECUs do this routinely. The tester keeps waiting on the
-# extended P2* timeout; the pending count is bounded so a stuck ECU
-# can't hang the session forever.
-P2_STAR_TIMEOUT_MS = 5000
-MAX_PENDING_FRAMES = 10
 
 
 # ---------------------------------------------------------------------------
@@ -102,47 +88,21 @@ class UdsClient:
     """Sends UDS requests over `transport` (write(bytes) / read() -> bytes)."""
 
     def __init__(self, transport, request_id: int = REQUEST_ID,
-                 response_id: int = RESPONSE_ID, timeout_ms: int = 1000,
-                 p2_star_timeout_ms: int = P2_STAR_TIMEOUT_MS,
-                 max_pending_frames: int = MAX_PENDING_FRAMES):
+                 response_id: int = RESPONSE_ID, timeout_ms: int = 1000):
         self.transport = transport
         self.request_id = request_id
         self.response_id = response_id
         self.timeout_ms = timeout_ms
-        self.p2_star_timeout_ms = p2_star_timeout_ms
-        self.max_pending_frames = max_pending_frames
 
     def _transact(self, request: bytes) -> bytes:
         self.transport.write(self.request_id, request)
-        timeout_ms = self.timeout_ms
-        pending = 0
-        while True:
-            response = self.transport.read(self.response_id, timeout_ms)
-            if response is None:
-                raise TransportError(
-                    f"no response to {request.hex()} (timeout {timeout_ms} ms)")
-            if response[0] != 0x7F:
-                return response
-            if len(response) < 3:
-                raise TransportError(
-                    f"malformed negative response to service "
-                    f"0x{request[0]:02X}: {response.hex()}")
-            service = response[1]
-            code = response[2]
-            if code == 0x78 and service == request[0]:
-                # ResponsePending for OUR service — wait on P2* for the
-                # real answer, bounded by max_pending_frames.
-                pending += 1
-                if pending > self.max_pending_frames:
-                    raise TransportError(
-                        f"ECU still busy after {self.max_pending_frames} "
-                        f"responsePending (0x78) frames for service "
-                        f"0x{request[0]:02X} — giving up")
-                timeout_ms = self.p2_star_timeout_ms
-                continue
-            raise TransportError(
-                f"negative response 0x{code:02X} (service 0x{service:02X}) "
-                f"to service 0x{request[0]:02X}")
+        response = self.transport.read(self.response_id, self.timeout_ms)
+        if response is None:
+            raise TransportError(f"no response to {request.hex()} (timeout {self.timeout_ms} ms)")
+        if response[0] == 0x7F:
+            code = response[2] if len(response) > 2 else 0
+            raise TransportError(f"negative response 0x{code:02X} to service 0x{request[0]:02X}")
+        return response
 
     def enter_session(self, session: int = 0x03) -> None:
         self._transact(bytes([0x10, session]))
@@ -279,32 +239,6 @@ def format_dtc(number: int) -> str:
     return f"{prefix}{number & 0x3FFF:04X}"
 
 
-def decode_dtc_status(status: int) -> dict:
-    """Decode the ISO 14229 DTC status byte carried in 0x19 responses.
-
-    The bits callers actually care about:
-      'confirmed' (bit 3) — the stored fault;
-      'pending'   (bit 2) — the fault maturing toward confirmation;
-      'testFailed'(bit 0) — the last test failed. NOT the same thing as
-        a stored code: a fault can be confirmed without currently
-        failing, and failing without yet being confirmed. Ad-hoc
-        `status & 0x01` checks conflate the two — use this helper.
-      'warningIndicator' (bit 7, warningIndicatorRequested) — what
-        actually corresponds to an illuminated MIL; the warning-lights
-        panel should key on this, not on any stored-code presence.
-    """
-    return {
-        "testFailed": bool(status & 0x01),
-        "testFailedThisOperationCycle": bool(status & 0x02),
-        "pending": bool(status & 0x04),
-        "confirmed": bool(status & 0x08),
-        "testNotCompletedSinceLastClear": bool(status & 0x10),
-        "testFailedSinceLastClear": bool(status & 0x20),
-        "testNotCompletedThisOperationCycle": bool(status & 0x40),
-        "warningIndicator": bool(status & 0x80),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Live-channel DID map + diesel candidates.
 #
@@ -329,10 +263,9 @@ DID_MAP = {
     "batteryV": (0xF448, 1, lambda b: b[0] * 0.1),  # TODO: confirm on DDXC
 }
 
-# Inverse scalers (value -> DID payload bytes). Used by the test fixture
-# transport (resources/sim_fixture.py) so fixture traffic flows through
-# the SAME decode path as real hardware — the mapping itself is
-# exercised, not bypassed.
+# Inverse scalers (value -> DID payload bytes). Used by the simulated
+# transport so simulated traffic flows through the SAME decode path as
+# real hardware — the mapping itself is exercised, not bypassed.
 DID_ENCODERS = {
     "rpm": lambda v: (lambda raw: bytes([raw >> 8, raw & 0xFF]))(int(round(v * 4))),
     "speedKph": lambda v: bytes([int(v) & 0xFF]),
@@ -421,124 +354,16 @@ def probe_candidates(client, channel: str) -> tuple[tuple | None, list[dict]]:
 
 
 # ---------------------------------------------------------------------------
-# J2534 device discovery / preflight
-#
-# PassThru devices register under HKLM\SOFTWARE\PassThruSupport.04.04\<Vendor>
-# with a FunctionLibrary value naming the vendor DLL. A 32-bit installer —
-# the Openport 2.0 clone's op20pt32.dll is 32-bit and cannot take newer
-# official drivers — lands in the 32-bit (WOW6432Node) view, which a 64-bit
-# process cannot load and does not even see in its own view. That mismatch,
-# not a missing cable, is the most common "device not found".
-# ---------------------------------------------------------------------------
-
-PASSTHRU_KEY = r"SOFTWARE\PassThruSupport.04.04"
-
-
-def python_bitness() -> int:
-    """Pointer width of the running interpreter (64 or 32). A process can
-    only load a PassThru DLL of its own bitness."""
-    return struct.calcsize("P") * 8
-
-
-def passthru_registrations() -> list[dict]:
-    """Enumerate registered J2534 PassThru devices from BOTH registry
-    views: [{view, name, dll}]. `view` is "64-bit" or "32-bit" — the
-    KEY_WOW64_* flags select the view regardless of this process's own
-    bitness (the documented mechanism; the WOW6432Node path itself is an
-    implementation detail). Read-only — returns [] off Windows or on any
-    registry error so a missing/unreadable key degrades gracefully."""
-    devices = []
-    try:
-        import winreg
-    except ImportError:
-        return devices
-    for view, flag in (("64-bit", winreg.KEY_WOW64_64KEY),
-                       ("32-bit", winreg.KEY_WOW64_32KEY)):
-        try:
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, PASSTHRU_KEY,
-                                0, winreg.KEY_READ | flag) as root:
-                index = 0
-                while True:
-                    try:
-                        vendor = winreg.EnumKey(root, index)
-                    except OSError:
-                        break
-                    index += 1
-                    name, dll = vendor, ""
-                    try:
-                        with winreg.OpenKey(root, vendor) as entry:
-                            name = (winreg.QueryValueEx(entry, "Name")[0]
-                                    or vendor)
-                            dll = winreg.QueryValueEx(
-                                entry, "FunctionLibrary")[0]
-                    except OSError:
-                        pass
-                    if not any(d["name"] == name and d["dll"] == dll
-                               for d in devices):
-                        devices.append({"view": view, "name": name, "dll": dll})
-        except OSError:
-            continue
-    return devices
-
-
-def describe_passthru_setup() -> list[str]:
-    """Log lines for the monitor: what this interpreter can see of the
-    J2534 install — its own bitness and every registered PassThru DLL."""
-    lines = [f"{python_bitness()}-bit interpreter"]
-    devices = passthru_registrations()
-    if not devices:
-        lines.append("no J2534 PassThru registrations found in either "
-                     "registry view")
-    for d in devices:
-        lines.append(f"{d['view']} registry view: {d['name']}"
-                     + (f" -> {d['dll']}" if d["dll"]
-                        else " (no FunctionLibrary path)"))
-    return lines
-
-
-def passthru_open_error(cause: Exception) -> str:
-    """Explain a J2534()/passThruOpen failure from what the registry
-    actually shows — 'no driver installed', 'right driver, wrong
-    interpreter bitness', and 'driver present but refused' are different
-    problems with different fixes."""
-    bitness = python_bitness()
-    devices = passthru_registrations()
-    ours = "64-bit" if bitness == 64 else "32-bit"
-    visible = [d for d in devices if d["view"] == ours]
-    hidden = [d for d in devices if d["view"] != ours]
-    if not devices:
-        return (f"J2534 open failed: {cause}. No J2534 PassThru device is "
-                f"registered in either registry view "
-                f"(HKLM\\{PASSTHRU_KEY}) — install the interface vendor's "
-                f"J2534 driver.")
-    if hidden and not visible:
-        hidden_names = ", ".join(
-            f"{d['name']} ({d['dll'] or 'no DLL path'})" for d in hidden)
-        return (f"J2534 open failed: {cause}. PassThru device(s) are "
-                f"registered only in the {hidden[0]['view']} registry view: "
-                f"{hidden_names} — a {bitness}-bit interpreter cannot load a "
-                f"{hidden[0]['view']} DLL. Install a {hidden[0]['view']} "
-                f"Python and point VWD_PYTHON at it (see HARDWARE.md).")
-    visible_names = ", ".join(
-        f"{d['name']} ({d['dll'] or 'no DLL path'})" for d in visible)
-    msg = (f"J2534 open failed: {cause}. PassThru device(s) registered for "
-           f"this interpreter: {visible_names} — the driver refused the "
-           f"open; check the interface is connected, powered, and not "
-           f"already claimed by another application.")
-    if hidden:
-        hidden_names = ", ".join(d["name"] for d in hidden)
-        msg += (f" ({hidden[0]['view']}-view registration(s) also exist — "
-                f"{hidden_names} — unusable by a {bitness}-bit process.)")
-    return msg
-
-
-# ---------------------------------------------------------------------------
-# J2534 pass-thru transport (requires pyj2534 + vendor DLL + device)
+# J2534 pass-thru transport (requires vendor J2534 DLL + device)
 # ---------------------------------------------------------------------------
 
 class J2534Transport:
     """Byte transport over a J2534 pass-thru device using the ISO15765
-    protocol, which performs ISO-TP segmentation in firmware."""
+    protocol, which performs ISO-TP segmentation in firmware.
+
+    Backed by resources/j2534.py (our own ctypes wrapper). The vendor DLL
+    comes from the CD / seller-supplied driver package and must be
+    registered under HKLM\\SOFTWARE\\PassThruSupport.04.04."""
 
     def __init__(self, device_name: str | None = None,
                  request_id: int = REQUEST_ID,
@@ -546,62 +371,63 @@ class J2534Transport:
         self.device_name = device_name
         self.request_id = request_id
         self.response_id = response_id
-        self._lib = None
         self._device = None
-        self._channel = None
 
     def open(self, bitrate: int = 500000) -> None:
         try:
-            import pyj2534
+            import j2534 as _j
         except ImportError as exc:
             raise TransportError(
-                "pyj2534 is not installed — run `pip install pyj2534` in "
-                "the interpreter the monitor runs under (the VWD_PYTHON "
-                "override, see HARDWARE.md)"
+                "resources/j2534.py not found next to uds.py"
             ) from exc
-        try:
-            self._lib = pyj2534.J2534()
-            # TODO: enumerate with listAvailiableDevices when multiple
-            # DLLs are registered
-            self._device = self._lib.passThruOpen(self.device_name)
-        except Exception as exc:
-            # 'No device', 'wrong-bitness DLL' and 'driver refused' look
-            # identical from here — the registry view is what separates
-            # them, so the message names the actual cause.
-            raise TransportError(passthru_open_error(exc)) from exc
-        protocol = pyj2534.ISO15765
-        flags = pyj2534.ISO15765_FRAME_PAD
-        try:
-            self._channel = self._lib.passThruConnect(
-                self._device, protocol, flags, bitrate)
-            self._lib.passThruStartMsgFilter(
-                self._channel,
-                filter_type=pyj2534.FLOW_CONTROL_FILTER,
-                mask_id=self.response_id_needed(),
-                pattern_id=self.request_id,
-            )
-        except Exception as exc:
-            self.close()
-            raise TransportError(f"J2534 channel setup failed: {exc}") from exc
 
-    def response_id_needed(self) -> int:
-        return self.response_id
+        # Resolve the DLL: explicit device_name wins, else enumerate the
+        # registry and take the first native-bitness entry.
+        import os
+        if self.device_name and os.path.isfile(self.device_name):
+            dll_path = self.device_name
+        else:
+            try:
+                devices = _j.enumerate_devices()
+            except RuntimeError as exc:
+                raise TransportError(str(exc)) from exc
+            if not devices:
+                raise TransportError(
+                    "no J2534 device registered — install the vendor driver "
+                    "(CD Driver folder / seller-supplied zip), then retry. "
+                    "Checked HKLM\\SOFTWARE\\PassThruSupport.04.04.")
+            native = {k: v for k, v in devices.items() if "32-bit DLL]" not in k}
+            label, dll_path = (next(iter(native.items())) if native
+                               else next(iter(devices.items())))
+            if label not in native:
+                raise TransportError(
+                    f"only a 32-bit J2534 DLL is registered ({label}); "
+                    "64-bit Python cannot load it. Install a 64-bit driver "
+                    "or run the monitor under 32-bit Python.")
+
+        self._device = _j.J2534Device(dll_path)
+        try:
+            self._device.open(bitrate=bitrate, response_id=self.response_id)
+        except _j.J2534Error as exc:
+            self._device.close()
+            self._device = None
+            raise TransportError(f"J2534 open failed: {exc}") from exc
+
+    def versions(self) -> dict:
+        return self._device.read_version() if self._device else {}
 
     def write(self, can_id: int, data: bytes) -> None:
-        self._lib.passThruWriteMsgs(self._channel, [(can_id, data)])
+        self._device.write_frame(can_id, data)
 
     def read(self, can_id: int, timeout_ms: int) -> bytes | None:
-        msgs = self._lib.passThruReadMsgs(self._channel, 1, timeout_ms)
-        if not msgs:
-            return None
-        return msgs[0].data
+        for frame_id, payload in self._device.read_frames(timeout_ms):
+            if frame_id == can_id:
+                return payload
+        return None
 
     def close(self) -> None:
-        if self._channel is not None:
-            self._lib.passThruDisconnect(self._channel)
-            self._channel = None
         if self._device is not None:
-            self._lib.passThruClose(self._device)
+            self._device.close()
             self._device = None
 
 
@@ -674,11 +500,8 @@ def _selftest() -> int:
         def __init__(self, responses):
             self.responses = list(responses)
             self.requests = []
-            self.timeouts = []
         def write(self, can_id, data): self.requests.append(bytes(data))
-        def read(self, can_id, timeout):
-            self.timeouts.append(timeout)
-            return self.responses.pop(0)
+        def read(self, can_id, timeout): return self.responses.pop(0)
 
     # DID probing: one DID answers, one is rejected (0x7F 22 31)
     client = UdsClient(RecordingTransport([
@@ -723,7 +546,7 @@ def _selftest() -> int:
           str(probe[0]))
 
     # Encoder round-trip: value -> DID payload -> decode recovers the value
-    # (this is the path the test fixture transport runs on every sample)
+    # (this is the path the simulated transport runs on every sample)
     roundtrip = {
         "rpm": (780.0, DID_MAP["rpm"][2]),
         "speedKph": (100, DID_MAP["speedKph"][2]),
@@ -784,99 +607,6 @@ def _selftest() -> int:
     check("0x31 encode + parse",
           recorder.requests[0] == bytes.fromhex("31010203") and status == bytes.fromhex("E7"),
           recorder.requests[0].hex())
-
-    # NRC 0x78 (responsePending): keep waiting on P2*, then take the real
-    # response. VAG ECUs emit this routinely (e.g. before a 0x22 answer).
-    recorder = RecordingTransport([
-        bytes.fromhex("7F2278"),            # pending for our 0x22
-        bytes.fromhex("62F40C0C30"),        # the real answer
-    ])
-    client = UdsClient(recorder)
-    payload = client.read_did(0xF40C)
-    check("0x78 pending then real response", payload == bytes.fromhex("0C30"),
-          payload.hex())
-    check("0x78 wait uses P2* timeout",
-          recorder.timeouts == [1000, P2_STAR_TIMEOUT_MS], str(recorder.timeouts))
-
-    # Repeated pending frames are still tolerated
-    recorder = RecordingTransport([
-        bytes.fromhex("7F2278"), bytes.fromhex("7F2278"), bytes.fromhex("7F2278"),
-        bytes.fromhex("62F40C0C30"),
-    ])
-    client = UdsClient(recorder)
-    check("0x78 repeated pending tolerated",
-          client.read_did(0xF40C) == bytes.fromhex("0C30"))
-
-    # ...but bounded: a stuck ECU can't pend forever
-    recorder = RecordingTransport([bytes.fromhex("7F2278")] * 20)
-    client = UdsClient(recorder, max_pending_frames=3)
-    try:
-        client.read_did(0xF40C)
-        check("0x78 unbounded pending raises", False, "no exception")
-    except TransportError as exc:
-        check("0x78 unbounded pending raises",
-              "responsePending" in str(exc) and len(recorder.responses) == 16,
-              str(exc))
-
-    # A pending echo for a DIFFERENT service is not ours — raise, don't swallow
-    client = UdsClient(RecordingTransport([bytes.fromhex("7F2E78")]))
-    try:
-        client.read_did(0xF40C)
-        check("0x78 wrong-service echo raises", False, "no exception")
-    except TransportError as exc:
-        check("0x78 wrong-service echo raises", "0x78" in str(exc), str(exc))
-
-    # Every other NRC still raises immediately
-    client = UdsClient(RecordingTransport([bytes.fromhex("7F2231")]))
-    try:
-        client.read_did(0xF40C)
-        check("NRC 0x31 still raises", False, "no exception")
-    except TransportError as exc:
-        check("NRC 0x31 still raises", "0x31" in str(exc), str(exc))
-
-    # DTC status byte decode: bit 3 = confirmed (stored), bit 2 = pending,
-    # bit 0 = testFailed — NOT interchangeable (ISO 14229 statusOfDTC).
-    s = decode_dtc_status(0x09)  # 0000_1001: confirmed + testFailed
-    check("dtc status confirmed+testFailed",
-          s["confirmed"] and s["testFailed"] and not s["pending"], str(s))
-    s = decode_dtc_status(0x04)  # pending only, not yet stored
-    check("dtc status pending-only",
-          s["pending"] and not s["confirmed"] and not s["testFailed"], str(s))
-    s = decode_dtc_status(0x08)  # stored, not currently failing
-    check("dtc status stored-not-failing",
-          s["confirmed"] and not s["testFailed"], str(s))
-    s = decode_dtc_status(0x88)  # confirmed + warningIndicatorRequested (MIL)
-    check("dtc status warning indicator (MIL)",
-          s["warningIndicator"] and s["confirmed"], str(s))
-
-    # J2534 flow-control filter uses the pair it was configured with:
-    # engine 0x7E0/0x7E8 by default, TCU 0x7E1/0x7E9 when asked.
-    import types as _types
-    fake = _types.ModuleType("pyj2534")
-    fake.ISO15765 = 6
-    fake.ISO15765_FRAME_PAD = 0x40
-    fake.FLOW_CONTROL_FILTER = 0x03
-    fake.filters = []
-
-    class _FakeJ2534:
-        def passThruOpen(self, name): return object()
-        def passThruConnect(self, dev, proto, flags, bitrate): return object()
-        def passThruStartMsgFilter(self, chan, filter_type, mask_id, pattern_id):
-            fake.filters.append((mask_id, pattern_id))
-    fake.J2534 = _FakeJ2534
-    sys.modules["pyj2534"] = fake
-    try:
-        engine_transport = J2534Transport()
-        engine_transport.open()
-        tcu_transport = J2534Transport(request_id=TCU_REQUEST_ID,
-                                       response_id=TCU_RESPONSE_ID)
-        tcu_transport.open()
-    finally:
-        del sys.modules["pyj2534"]
-    check("j2534 filter defaults to engine pair",
-          fake.filters[0] == (0x7E8, 0x7E0), str(fake.filters))
-    check("j2534 filter honours TCU pair",
-          fake.filters[1] == (0x7E9, 0x7E1), str(fake.filters))
 
     print(f"{len(failures)} failure(s)" if failures else "all checks passed")
     return 1 if failures else 0
