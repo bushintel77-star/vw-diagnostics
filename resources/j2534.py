@@ -22,26 +22,30 @@ import sys
 from ctypes import byref, c_char, c_char_p, c_void_p, create_string_buffer
 from ctypes import wintypes
 
-# --- J2534 constants (SAE J2534-1) -----------------------------------------
+# --- J2534 constants (SAE J2534-1 v04.04, cross-checked against a reference
+# implementation — protocol/filter/config IDs live in spec-reserved ranges
+# and silently break live mode when wrong) ---------------------------------
 
 STATUS_NOERROR = 0x00000000
-ERR_TIMEOUT = 0x00000009
-BUFFER_TIMEOUT = 0x00010001  # read timed out but messages were returned
+ERR_TIMEOUT = 0x00000009      # ReadMsgs returns this when the buffer is
+                              # empty at timeout — normal idle, not an error
+ERR_BUFFER_OVERFLOW = 0x12
 
-PROTO_CAN = 0x00000001
-PROTO_ISO15765 = 0x00000005
+PROTO_CAN = 0x00000005
+PROTO_ISO15765 = 0x00000006
 
-FLOW_CONTROL_FILTER = 0x00010003
+FLOW_CONTROL_FILTER = 0x00000003
 
 IOCTL_GET_CONFIG = 0x01
 IOCTL_SET_CONFIG = 0x02
-IOCTL_FLUSH_RX = 0x08
-IOCTL_FLUSH_TX = 0x09
+IOCTL_CLEAR_TX_BUFFER = 0x07
+IOCTL_CLEAR_RX_BUFFER = 0x08
 
-PARAM_DATA_RATE = 0x05
-PARAM_LOOPBACK = 0x04
+PARAM_DATA_RATE = 0x01
+PARAM_LOOPBACK = 0x03
 
 CAN_29BIT_ID = 0x00000100
+ISO15765_FRAME_PAD = 0x00000040
 
 PASS_THRU_MSG_DATA_LEN = 4128
 
@@ -257,8 +261,9 @@ class J2534Device:
         num = U(max_msgs)
         status = self._PassThruReadMsgs(
             self.channel_id, msgs, byref(num), timeout_ms)
-        if status not in (STATUS_NOERROR, BUFFER_TIMEOUT):
-            self._check(status, "PassThruReadMsgs")
+        if status == ERR_TIMEOUT:
+            return []  # no traffic within the window — normal idle
+        self._check(status, "PassThruReadMsgs")
         out = []
         for i in range(min(num.value, max_msgs)):
             m = msgs[i]
