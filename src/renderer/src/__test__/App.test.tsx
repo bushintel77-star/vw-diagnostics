@@ -736,3 +736,52 @@ describe("Workflow guide sticky", () => {
     expect(screen.getByText("Workflow guide")).toBeVisible();
   });
 });
+
+describe("Kill-switch gate", () => {
+  beforeEach(async () => {
+    cleanup();
+    mockState.replaySession = true;
+    window.localStorage.setItem(
+      "vwd.guide",
+      JSON.stringify({ open: false, x: 24, y: 90, stage: null })
+    );
+  });
+
+  test("blocked floor retires the dashboard behind a no-dismiss update screen", async () => {
+    (window.context.checkForUpdate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        status: "blocked",
+        currentVersion: "1.0.0",
+        requiredVersion: "1.1.0",
+        releaseUrl: "https://github.com/x",
+      });
+    await act(async () => {
+      render(<App />);
+    });
+    expect(
+      screen.getByText(/update required before continuing/i)
+    ).toBeVisible();
+    expect(screen.getByText(/retired/i)).toBeVisible();
+    // the only exit is the download button — nothing dismisses the gate
+    expect(
+      screen.queryByRole("button", { name: /dismiss update notice/i })
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /download 1\.1\.0/i })
+    ).toBeVisible();
+  });
+
+  test("non-blocked check renders no gate", async () => {
+    (window.context.checkForUpdate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        status: "current",
+        currentVersion: "1.1.0",
+      });
+    await act(async () => {
+      render(<App />);
+    });
+    expect(
+      screen.queryByText(/update required before continuing/i)
+    ).toBeNull();
+  });
+});

@@ -1,5 +1,5 @@
 import { app, shell } from "electron";
-import { CheckForUpdateFn } from "@shared/types";
+import { CheckForUpdateFn, UpdateCheckResult } from "@shared/types";
 
 // Update notice: check GitHub's releases API from the main process (the
 // renderer CSP is default-src 'self', so it cannot reach api.github.com),
@@ -12,6 +12,11 @@ const RELEASE_API =
   "https://api.github.com/repos/bushintel77-star/vw-diagnostics/releases/latest";
 const RELEASES_PAGE =
   "https://github.com/bushintel77-star/vw-diagnostics/releases/latest";
+// Kill-switch floor, served from the landing-page host (GitHub Pages sends
+// permissive CORS). Raising minRequired there bricks outdated installs
+// without cutting a release; the file ships in site/ on main.
+const FLOOR_URL =
+  "https://bushintel77-star.github.io/vw-diagnostics/update-floor.json";
 const CHECK_TIMEOUT_MS = 5000;
 
 // The URL offered to the renderer comes only from a check this process
@@ -45,6 +50,23 @@ export function isNewerVersion(latest: string, current: string): boolean {
   return false;
 }
 
+/** Fetch the remote kill-switch floor. Never throws; any failure returns
+ *  null and the check proceeds without a floor (fail-open on the floor,
+ *  which only ever *adds* blocking, never removes it). */
+async function fetchRequiredFloor(): Promise<string | null> {
+  try {
+    const response = await fetch(FLOOR_URL, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { minRequired?: unknown };
+    return typeof data?.minRequired === "string" ? data.minRequired : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Never throws and never blocks startup: any failure reports "unknown",
  *  which renders nothing — a failed check is never "you're up to date". */
 export const checkForUpdate: CheckForUpdateFn = async () => {
@@ -68,6 +90,29 @@ export const checkForUpdate: CheckForUpdateFn = async () => {
     return { status: "unknown", currentVersion, reason: "dev build" };
   }
 
+  const [releaseCheck, floor] = await Promise.all([
+    checkLatestRelease(currentVersion),
+    fetchRequiredFloor(),
+  ]);
+
+  // Kill switch outranks everything: an install below the floor must not
+  // present the dashboard even if a release check failed.
+  if (floor && isNewerVersion(floor, currentVersion)) {
+    if (lastReleaseUrl === null) lastReleaseUrl = RELEASES_PAGE;
+    return {
+      status: "blocked",
+      currentVersion,
+      requiredVersion: floor.replace(/^v/, ""),
+      releaseUrl: lastReleaseUrl,
+    };
+  }
+  return releaseCheck;
+};
+
+/** Release-API half of the check. Returns the pre-floor result. */
+async function checkLatestRelease(
+  currentVersion: string
+): Promise<UpdateCheckResult> {
   try {
     const response = await fetch(RELEASE_API, {
       headers: {
@@ -124,7 +169,7 @@ export const checkForUpdate: CheckForUpdateFn = async () => {
       reason: "release check unreachable",
     };
   }
-};
+}
 
 /** Opens the release page the main process resolved in its last successful
  *  check. Takes no URL argument — an arbitrary renderer-supplied string to

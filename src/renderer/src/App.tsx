@@ -25,6 +25,7 @@ import StripChart from "@/components/dashboard/StripChart";
 import DeletionPanel from "@/components/dashboard/DeletionPanel";
 import ModsPanel, { ScopeCard } from "@/components/dashboard/ModsPanel";
 import UpdateBanner from "@/components/dashboard/UpdateBanner";
+import UpdateGate from "@/components/dashboard/UpdateGate";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
 import WorkflowGuide from "@/components/dashboard/WorkflowGuide";
@@ -369,6 +370,8 @@ const App = () => {
 
   return (
     <div className="container flex min-h-dvh flex-col gap-6 py-8">
+      {/* kill-switch gate — renders only when the remote floor retires this version */}
+      <UpdateGate />
       {/* update notice — renders only when a newer release exists */}
       <UpdateBanner />
       {/* draggable getting-started sticky — persisted open/closed + position */}

@@ -217,3 +217,93 @@ describe("release URL allowlist", () => {
     expect(openExternal).toHaveBeenCalledWith(url);
   });
 });
+
+describe("kill-switch floor (update-floor.json)", () => {
+  beforeEach(() => {
+    electronState.isPackaged = true;
+    electronState.version = "1.0.0";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** URL-routing stub: the check makes two fetches (release API + floor). */
+  const stubRouting = (
+    routes: Record<string, () => Promise<unknown>>,
+    fallback: () => Promise<unknown>
+  ) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const handler = Object.entries(routes).find(([prefix]) =>
+          url.startsWith(prefix)
+        );
+        return (handler ? handler[1] : fallback)();
+      })
+    );
+  };
+
+  const floorResponse = (minRequired: string | null) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve(
+          minRequired === null ? {} : { minRequired }
+        ),
+    });
+
+  const releaseResponse = (tag: string) =>
+    releaseJson({ tag_name: tag, html_url: "https://github.com/x", published_at: "" });
+
+  test("floor above current -> blocked, even when release says current", async () => {
+    stubRouting(
+      { "https://bushintel77-star.github.io/": () => floorResponse("1.2.0") },
+      () => releaseResponse("v1.0.0")
+    );
+    const result = await checkForUpdate();
+    expect(result.status).toBe("blocked");
+    if (result.status === "blocked") {
+      expect(result.requiredVersion).toBe("1.2.0");
+      expect(result.currentVersion).toBe("1.0.0");
+    }
+  });
+
+  test("floor blocks even when the release API is unreachable", async () => {
+    stubRouting(
+      { "https://bushintel77-star.github.io/": () => floorResponse("1.1.0") },
+      () => Promise.reject(new Error("offline"))
+    );
+    const result = await checkForUpdate();
+    expect(result.status).toBe("blocked");
+  });
+
+  test("floor unreachable -> check behaves as before (no block)", async () => {
+    stubRouting(
+      {},
+      () => releaseResponse("v1.0.0") // release current, floor fetch falls through
+    );
+    // floor falls to fallback (release JSON, no minRequired) -> null floor
+    const result = await checkForUpdate();
+    expect(result.status).toBe("current");
+  });
+
+  test("floor equal to current -> not blocked", async () => {
+    stubRouting(
+      { "https://bushintel77-star.github.io/": () => floorResponse("1.0.0") },
+      () => releaseResponse("v1.0.0")
+    );
+    const result = await checkForUpdate();
+    expect(result.status).toBe("current");
+  });
+
+  test("unparseable floor -> not blocked (fail-open on the floor only)", async () => {
+    stubRouting(
+      { "https://bushintel77-star.github.io/": () => floorResponse("banana") },
+      () => releaseResponse("v1.0.0")
+    );
+    const result = await checkForUpdate();
+    expect(result.status).toBe("current");
+  });
+});

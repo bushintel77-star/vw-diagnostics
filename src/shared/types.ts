@@ -420,7 +420,16 @@ export type UpdateCheckResult =
       releaseUrl: string;
       publishedAt: string;
     }
+  | {
+      status: "blocked";
+      currentVersion: string;
+      requiredVersion: string;
+      releaseUrl: string;
+    }
   | { status: "unknown"; currentVersion: string; reason: string };
+// "blocked" is the kill switch: the remote update-floor.json declares a
+// minimum required version and this install is below it — the UI renders
+// a blocking gate instead of the dashboard.
 
 export type CheckForUpdateFn = () => Promise<UpdateCheckResult>;
 

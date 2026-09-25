@@ -1,0 +1,4 @@
+{
+  "minRequired": "1.0.0",
+  "_comment": "Kill switch for installed VW Diagnostics apps. Raise minRequired to retire versions with known faults (e.g. after a DID-mapping fix: '1.1.0'). The app checks this on launch; an install below the floor gets a blocking update screen instead of the dashboard. Served from GitHub Pages; changes deploy with the site/ folder."
+}
