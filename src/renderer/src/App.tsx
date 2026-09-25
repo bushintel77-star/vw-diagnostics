@@ -27,6 +27,7 @@ import ModsPanel, { ScopeCard } from "@/components/dashboard/ModsPanel";
 import UpdateBanner from "@/components/dashboard/UpdateBanner";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
+import WorkflowGuide from "@/components/dashboard/WorkflowGuide";
 import { isBrowserLive } from "@/web/liveBridge";
 import {
   DiagnosticAnalysisEvent,
@@ -370,6 +371,8 @@ const App = () => {
     <div className="container flex min-h-dvh flex-col gap-6 py-8">
       {/* update notice — renders only when a newer release exists */}
       <UpdateBanner />
+      {/* draggable getting-started sticky — persisted open/closed + position */}
+      <WorkflowGuide />
 
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">

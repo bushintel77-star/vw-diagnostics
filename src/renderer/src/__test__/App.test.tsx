@@ -36,6 +36,11 @@ describe("Testing the VW diagnostic dashboard", () => {
     commandMock().mockClear();
     subscribeMock().mockClear();
     mockState.replaySession = true;
+    // keep the workflow guide deterministically hidden for shell tests
+    window.localStorage.setItem(
+      "vwd.guide",
+      JSON.stringify({ open: false, x: 24, y: 90, stage: null })
+    );
     await act(async () => {
       render(<App />);
     });
@@ -690,5 +695,44 @@ describe("No J2534 interface attached", () => {
     expect(
       screen.getAllByText(J2534_MISSING).length
     ).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("Workflow guide sticky", () => {
+  beforeEach(async () => {
+    cleanup();
+    mockState.replaySession = true;
+    window.localStorage.removeItem("vwd.guide"); // first launch: guide opens
+    await act(async () => {
+      render(<App />);
+    });
+  });
+
+  test("opens on launch with every workflow stage listed", () => {
+    expect(screen.getByText("Workflow guide")).toBeVisible();
+    expect(screen.getByText("1 · Explore in simulation")).toBeVisible();
+    expect(screen.getByText("2 · Install the J2534 driver")).toBeVisible();
+    expect(screen.getByText("5 · Connect to the truck")).toBeVisible();
+    expect(screen.getByText("7 · Tuning & flash (gated)")).toBeVisible();
+    // stage one is flagged as the starting point
+    expect(screen.getByText("start here")).toBeVisible();
+  });
+
+  test("expanding a stage shows its how-to and common fixes", () => {
+    fireEvent.click(screen.getByText("2 · Install the J2534 driver"));
+    expect(screen.getByText(/vendor driver setup/i)).toBeVisible();
+    // the no-original-software rule is part of the guide itself
+    expect(screen.getByText(/never install ecuflash/i)).toBeVisible();
+    expect(screen.getByText(/virustotal\.com/i)).toBeVisible();
+  });
+
+  test("hiding the sticky parks a Guide button that reopens it", () => {
+    fireEvent.click(screen.getByRole("button", { name: "Close guide" }));
+    expect(screen.queryByText("Workflow guide")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open workflow guide" })).toBeVisible();
+    // closed state persisted for next launch
+    expect(JSON.parse(window.localStorage.getItem("vwd.guide")!).open).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Open workflow guide" }));
+    expect(screen.getByText("Workflow guide")).toBeVisible();
   });
 });
