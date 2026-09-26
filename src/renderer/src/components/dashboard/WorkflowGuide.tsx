@@ -31,24 +31,24 @@ interface Stage {
 const STAGES: Stage[] = [
   {
     id: "explore",
-    title: "1 · Explore in simulation",
+    title: "1 · Check the connection setup",
     status: "now",
     how:
-      "Press Start Session. The dashboard boots in simulated self-check mode — every gauge, chart, and panel works with fabricated-but-plausible 3.0 TDI data. Nothing is connected; the amber SIMULATED badge says so.",
+      "Start Session attempts a real connection to the adapter and vehicle. Check the existing driver and Python interpreter first. There is no simulation mode in the app.",
     fixes: [
-      "Nothing here can touch a vehicle — simulation writes nothing, ever.",
-      "The DID map, EWMA baselines, and pull verification all run through the same code paths as live mode.",
+      "The read-only preflight in HARDWARE.md checks the registry and DLL file without opening the adapter.",
+      "Live values appear only after the vehicle answers; missing channels show no data.",
     ],
   },
   {
     id: "driver",
-    title: "2 · Install the J2534 driver",
+    title: "2 · Keep the compatible J2534 driver",
     status: "later",
     how:
-      "Run the vendor driver setup that came with your adapter (CD Driver folder or the file your seller sent). It registers the J2534 DLL with Windows. Installing offline is fine — the installer never needs internet.",
+      "Use the driver package confirmed for your adapter. If it is already installed, keep it. The Cable setup wizard (header) checks it for you and installs the pinned 1.01.4341 driver that comes locked in the app (passkey). It blocks sessions if a newer Tactrix driver appears. The app never runs firmware updaters.",
     fixes: [
-      "Never install EcuFlash or anything from tactrix.com — not needed for this app, and their updater can kill clone adapters.",
-      "No CD and no seller reply? Scan any downloaded setup on virustotal.com before running it. A couple of generic hits is normal for driver installers.",
+      "For a clone using a legacy driver, avoid newer Tactrix/EcuFlash installers and firmware updates.",
+      "A 32-bit op20pt32.dll needs 32-bit Python even on 64-bit Windows 11. Set VWD_PYTHON if automatic selection fails.",
     ],
   },
   {
@@ -64,13 +64,13 @@ const STAGES: Stage[] = [
   },
   {
     id: "smoke",
-    title: "4 · First live session (no car)",
+    title: "4 · Verify setup before connecting",
     status: "later",
     how:
-      "Untick Simulation mode and press Start Session. The monitor checks for the driver, opens the adapter, and reads its firmware version. If this step reports the adapter's version string, the PC-to-adapter link is proven.",
+      "Run the read-only preflight from HARDWARE.md. A ready result means the Python architecture and driver file match; it does not prove the USB connection. Start Session subsequently opens the adapter and expects a vehicle response.",
     fixes: [
-      "'no J2534 device registered' → the driver install didn't finish; redo stage 2.",
-      "'only a 32-bit J2534 DLL' → the vendor driver is 32-bit-only; ask the seller for a 64-bit build.",
+      "No J2534 registration → check whether your existing driver package registered its DLL.",
+      "Wrong architecture → select 32-bit Python for the 32-bit driver; preserve the known compatible driver.",
     ],
   },
   {
@@ -89,7 +89,7 @@ const STAGES: Stage[] = [
     title: "6 · Read fault codes & watch live data",
     status: "later",
     how:
-      "DTCs come with freeze frames and diesel-specific notes. Channels carry plausibility checks; anything implausible is rejected rather than displayed. Baselines are learned per-session and improve over sessions.",
+      "The app reads fault codes and their status bytes, then adds known code descriptions. Freeze frames are not yet read. Live channels use exact response widths; baselines are learned per session.",
     fixes: [
       "Clearing codes only clears what the ECU reports — pending codes may return if the fault is still present.",
       "Boost may show less than expected: some PIDs saturate; the probe notes say which DID was adopted.",
@@ -200,8 +200,8 @@ export default function WorkflowGuide(): React.JSX.Element {
           onPointerUp={onPointerUp}
         >
           <GripVertical className="size-3.5 text-muted-foreground" />
-          <Activity className="size-4 text-chart-1" />
-          <span className="font-serif text-sm font-bold">Workflow guide</span>
+          <Activity className="size-4 text-signal" />
+          <span className="text-sm font-bold">Workflow guide</span>
           <Badge variant="outline" className="ml-1 text-[10px] text-muted-foreground">
             sticky
           </Badge>
@@ -243,7 +243,7 @@ export default function WorkflowGuide(): React.JSX.Element {
                   />
                   <span className="text-xs font-medium">{stage.title}</span>
                   {stage.status === "now" && (
-                    <Badge className="ml-auto border-chart-1/50 bg-chart-1/10 text-[9px] text-chart-1" variant="outline">
+                    <Badge className="ml-auto border-signal/50 bg-signal/10 text-[9px] text-signal" variant="outline">
                       start here
                     </Badge>
                   )}

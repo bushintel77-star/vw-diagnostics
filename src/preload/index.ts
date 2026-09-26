@@ -27,6 +27,11 @@ try {
     // No URL argument crosses the bridge: the main process opens only the
     // release URL it resolved itself in the last check.
     openUpdateDownload: () => ipcRenderer.invoke("update:openDownload"),
+    getCableSetupStatus: (options?: { full?: boolean }) =>
+      ipcRenderer.invoke("cable:status", { full: options?.full === true }),
+    unlockDriver: (passkey: string) =>
+      ipcRenderer.invoke("cable:unlockDriver", passkey),
+    installDriver: () => ipcRenderer.invoke("cable:installDriver"),
     onDiagnosticEvent: (
       listener: (event: DiagnosticEvent) => void
     ): (() => void) => {

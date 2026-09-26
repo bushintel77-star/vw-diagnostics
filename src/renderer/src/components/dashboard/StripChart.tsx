@@ -111,13 +111,13 @@ const StripChart = ({
               <>
                 <polyline
                   points={`${linePoints(values)} ${WIDTH},${HEIGHT} 0,${HEIGHT}`}
-                  className="fill-chart-1"
+                  className="fill-signal"
                   opacity="0.12"
                 />
                 <polyline
                   points={linePoints(values)}
                   fill="none"
-                  className="stroke-chart-1"
+                  className="stroke-signal"
                   strokeWidth="2"
                   vectorEffect="non-scaling-stroke"
                 />

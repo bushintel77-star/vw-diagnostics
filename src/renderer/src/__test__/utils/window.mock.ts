@@ -1,5 +1,20 @@
 import { vi } from "vitest";
-import { DiagnosticEvent } from "@shared/types";
+import { CableSetupStatus, DiagnosticEvent } from "@shared/types";
+
+export const READY_MACHINE: CableSetupStatus = {
+  platformSupported: true,
+  windowsBuild: 19045,
+  driverInstalled: true,
+  driverVersion: "1.01.0.4341",
+  driverVersionState: "match",
+  driverBundled: false,
+  cable: "absent",
+  cableProblemCode: null,
+  preflight: null,
+  lockedForSeconds: 0,
+  unlocked: false,
+  checkedAt: "2026-09-26T00:00:00.000Z",
+};
 
 // Data events replayed to every subscriber while `mockState.replaySession`
 // is on — they stand in for a real J2534 session's stream. Status events are
@@ -254,6 +269,17 @@ const context = Object.defineProperty(window, "context", {
       })
     ),
     openUpdateDownload: vi.fn().mockImplementation(() => Promise.resolve()),
+    // Default: a set-up machine with the cable unplugged — nothing to fix,
+    // so the setup wizard stays closed. Wizard tests override per case.
+    getCableSetupStatus: vi.fn().mockImplementation(() =>
+      Promise.resolve(READY_MACHINE)
+    ),
+    unlockDriver: vi.fn().mockImplementation(() =>
+      Promise.resolve({ ok: false, reason: "unavailable", message: "test stub" })
+    ),
+    installDriver: vi.fn().mockImplementation(() =>
+      Promise.resolve({ ok: false, reason: "unavailable", message: "test stub" })
+    ),
   },
 });
 

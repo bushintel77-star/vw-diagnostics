@@ -29,25 +29,35 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npx vitest run
+      - run: npm test
       - run: npm run build
 
   python:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            architecture: x64
+          - os: windows-latest
+            architecture: x86
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+          architecture: ${{ matrix.architecture }}
+      - run: python -m unittest discover -s tests -v
       - run: python resources/uds.py --selftest
       # The monitor has no simulated product mode. --selftest is the test-only
       # path: the same session loop driven against resources/sim_fixture.py,
       # which exercises the NDJSON event shape and the DID encode/decode codec
-      # (stdlib-only; pyj2534 is deliberately NOT installed).
+      # (stdlib-only; all native driver calls are mocked).
       - name: Monitor event-stream smoke test (test fixture)
         run: python resources/j2534_monitor.py --selftest > monitor-events.ndjson
       - name: Assert event stream is well-formed NDJSON
+        shell: bash
         run: |
           python - <<'EOF'
           import json

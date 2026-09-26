@@ -1,5 +1,4 @@
-import { spawn, ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline";
+import { MonitorProcess } from "../../../scripts/monitor-process.mjs";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -7,9 +6,12 @@ import { app, WebContents } from "electron";
 import monitorScript from "../../../resources/j2534_monitor.py?asset&asarUnpack";
 // Bundled alongside the monitor so `import uds` resolves in packaged builds.
 import udsModule from "../../../resources/uds.py?asset&asarUnpack";
+import j2534Module from "../../../resources/j2534.py?asset&asarUnpack";
 void udsModule;
+void j2534Module;
 import {
   BaselineStateFile,
+  CablePreflight,
   DiagnosticCommand,
   DiagnosticCommandResult,
   DiagnosticEvent,
@@ -17,7 +19,6 @@ import {
   DiagnosticSessionResult,
 } from "@shared/types";
 
-const FIRST_LINE_TIMEOUT_MS = 10_000;
 // The monitor itself does no file I/O; the main process owns persistence of
 // learned per-VIN baselines at a fixed app-managed path.
 const baselineStatePath = (): string =>
@@ -35,43 +36,11 @@ async function loadBaselineState(): Promise<BaselineStateFile> {
 
 async function persistBaselineState(state: BaselineStateFile): Promise<void> {
   try {
+    await mkdir(app.getPath("userData"), { recursive: true });
     await writeFile(baselineStatePath(), JSON.stringify(state), "utf8");
   } catch (error) {
     console.warn("[diagnostic] could not persist baseline state:", error);
   }
-}
-
-let child: ChildProcess | null = null;
-let stoppedByUser = false;
-
-interface PythonCandidate {
-  command: string;
-  args: string[];
-}
-
-// Monitor interpreter resolution: VWD_PYTHON override (the J2534 DLL
-// bitness must match the interpreter — a 32-bit vendor DLL needs a
-// 32-bit Python). PARSER_PYTHON is the deprecated alias from before the
-// monitor had its own name; it still works. Then the usual interpreter
-// names per platform.
-function pythonCandidates(): PythonCandidate[] {
-  const candidates: PythonCandidate[] = [];
-  const override = process.env.VWD_PYTHON ?? process.env.PARSER_PYTHON;
-  if (override) {
-    candidates.push({ command: override, args: [] });
-  }
-  if (process.platform === "win32") {
-    candidates.push(
-      { command: "python", args: [] },
-      { command: "py", args: ["-3"] }
-    );
-  } else {
-    candidates.push(
-      { command: "python3", args: [] },
-      { command: "python", args: [] }
-    );
-  }
-  return candidates;
 }
 
 const emit = (sender: WebContents, event: DiagnosticEvent): void => {
@@ -87,6 +56,9 @@ const emit = (sender: WebContents, event: DiagnosticEvent): void => {
 // ---------------------------------------------------------------------------
 
 let flashChunks: Buffer[] = [];
+// Progress reaches the renderer (bytes only, never chunk data), throttled.
+const PROGRESS_INTERVAL_MS = 120;
+let lastProgressAt = 0;
 
 const backupsDir = (): string => join(app.getPath("userData"), "backups");
 
@@ -97,6 +69,9 @@ async function persistBackup(
   const data = Buffer.concat(flashChunks);
   flashChunks = [];
   try {
+    if (data.length === 0 || data.length !== complete.bytes || (complete.totalBytes != null && data.length !== complete.totalBytes)) {
+      throw new Error("Incomplete backup: received byte count does not match completion event");
+    }
     await mkdir(backupsDir(), { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const path = join(backupsDir(), `ecu-backup-${stamp}.bin`);
@@ -120,7 +95,12 @@ function handleFlashEvent(sender: WebContents, event: DiagnosticFlashEvent): voi
     flashChunks = [];
   } else if (event.phase === "progress" && event.chunkB64) {
     flashChunks.push(Buffer.from(event.chunkB64, "base64"));
-    return; // progress chunks never cross into the renderer
+    const now = Date.now();
+    if (now - lastProgressAt < PROGRESS_INTERVAL_MS) return;
+    lastProgressAt = now;
+    // Chunk data never crosses into the renderer; the byte count does.
+    emit(sender, { type: "flash", phase: "progress", bytes: event.bytes, totalBytes: event.totalBytes });
+    return;
   } else if (event.phase === "complete") {
     void persistBackup(sender, event);
     return;
@@ -128,181 +108,55 @@ function handleFlashEvent(sender: WebContents, event: DiagnosticFlashEvent): voi
   emit(sender, { ...event, chunkB64: undefined });
 }
 
-/**
- * Spawns one candidate and resolves with the process once it prints its
- * first stdout line (proving a real interpreter is running the script).
- * Resolves null when this candidate can't run so the next one applies.
- */
-function trySpawn(
-  candidate: PythonCandidate,
-  args: string[]
-): Promise<ChildProcess | null> {
-  return new Promise((resolve) => {
-    let proc: ChildProcess;
-    try {
-      proc = spawn(candidate.command, [...candidate.args, monitorScript, ...args], {
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      });
-    } catch {
-      resolve(null);
-      return;
-    }
+let host: MonitorProcess | null = null;
+let baselineWrites: Promise<void> = Promise.resolve();
 
-    let settled = false;
-    const finish = (won: ChildProcess | null): void => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve(won);
-      }
-    };
+export const isDiagnosticRunning = (): boolean => host?.running ?? false;
 
-    const timer = setTimeout(() => {
-      proc.kill();
-      finish(null);
-    }, FIRST_LINE_TIMEOUT_MS);
-
-    proc.on("error", (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") finish(null);
-    });
-    // Also covers the Windows Store python stub, which spawns fine but
-    // exits with a message instead of ever printing a JSON line.
-    proc.on("close", () => finish(null));
-    if (proc.stdout) {
-      proc.stdout.once("data", () => finish(proc));
+export async function startDiagnostic(sender: WebContents): Promise<DiagnosticSessionResult> {
+  if (host?.running) return { started: false, message: "A diagnostic session is already running." };
+  flashChunks = [];
+  host = new MonitorProcess(monitorScript, (event) => {
+    if (event.type === "baselines") {
+      // Serialize read-modify-write updates so final/session events cannot race.
+      baselineWrites = baselineWrites.then(async () => {
+        const state = await loadBaselineState();
+        state.vins[event.vin] = { sessions: event.sessions, channels: event.channels };
+        await persistBaselineState(state);
+      }).catch((error) => console.warn("[diagnostic] baseline save failed:", error));
+    } else if (event.type === "flash") {
+      handleFlashEvent(sender, event);
+    } else {
+      emit(sender, event);
     }
   });
-}
-
-export const isDiagnosticRunning = (): boolean => child !== null;
-
-export async function startDiagnostic(
-  sender: WebContents
-): Promise<DiagnosticSessionResult> {
-  if (child) {
-    return { started: false, message: "A diagnostic session is already running." };
+  const sessionHost = host;
+  const result = await sessionHost.start();
+  if (result.started && host === sessionHost) {
+    const state = await loadBaselineState();
+    if (Object.keys(state.vins).length) await sessionHost.send({ cmd: "seed_baseline", vehicles: state.vins });
   }
-
-  // No mode flag: the monitor only ever attempts a real J2534 connection
-  // and reports the genuine TransportError when none is attached.
-  for (const candidate of pythonCandidates()) {
-    const proc = await trySpawn(candidate, []);
-    if (!proc) continue;
-
-    child = proc;
-    stoppedByUser = false;
-    let stderr = "";
-
-    if (proc.stdout) {
-      // The once()-bound data listener in trySpawn does not consume the
-      // chunk; readline receives every line including the first.
-      const lines = createInterface({ input: proc.stdout });
-      lines.on("line", (line) => {
-        if (!line.trim()) return;
-        try {
-          const event = JSON.parse(line) as DiagnosticEvent;
-          // Learned baselines are persisted here, not in the monitor.
-          if (event.type === "baselines") {
-            void (async () => {
-              const state = await loadBaselineState();
-              state.version = 1;
-              state.vins[event.vin] = {
-                sessions: event.sessions,
-                channels: event.channels,
-              };
-              await persistBaselineState(state);
-            })();
-            return;
-          }
-          // Flash chunks are assembled here; the renderer only ever sees
-          // progress/complete/error with the final file path.
-          if (event.type === "flash") {
-            handleFlashEvent(sender, event);
-            return;
-          }
-          emit(sender, event);
-        } catch {
-          console.warn("[diagnostic] dropping malformed JSON line:", line);
-        }
-      });
-    }
-    if (proc.stderr) {
-      proc.stderr.setEncoding("utf8");
-      proc.stderr.on("data", (chunk: string) => {
-        stderr = (stderr + chunk).slice(-2000);
-        console.warn("[diagnostic] stderr:", chunk.trimEnd());
-      });
-    }
-    // EPIPE if the monitor exits between a command write and delivery.
-    proc.stdin?.on("error", () => { });
-    proc.on("close", (code) => {
-      if (child === proc) {
-        child = null;
-      }
-      emit(sender, {
-        type: "status",
-        phase: "disconnected",
-        message: stoppedByUser
-          ? "Session stopped by user."
-          : code === 0
-            ? "Diagnostic session ended."
-            : `Monitor exited with code ${code}. ${stderr.trim()}`.trim(),
-        mode: "live",
-      });
-    });
-
-    // Seed any cross-session baselines persisted for this machine so the
-    // analysis tier starts with prior knowledge of the vehicle.
-    const baselineState = await loadBaselineState();
-    if (Object.keys(baselineState.vins).length > 0) {
-      await sendDiagnosticCommand({
-        cmd: "seed_baseline",
-        vehicles: baselineState.vins,
-      });
-    }
-
-    return {
-      started: true,
-      message: "Diagnostic monitor started; attempting live J2534 connection.",
-    };
-  }
-
-  return {
-    started: false,
-    message:
-      "No Python interpreter found. Install Python 3 or set VWD_PYTHON to the interpreter path.",
-  };
+  return result;
 }
 
 export async function stopDiagnostic(): Promise<DiagnosticSessionResult> {
-  if (!child) {
-    return { started: false, message: "No diagnostic session is running." };
-  }
-  stoppedByUser = true;
-  child.kill();
-  child = null;
-  return { started: false, message: "Diagnostic session stopped." };
+  const result = host ? await host.stop() : { started: false, message: "Diagnostic session stopped." };
+  await baselineWrites;
+  return result;
 }
 
-/**
- * Sends a JSON command to the running monitor over stdin. This is the
- * channel every future UDS operation (clear codes, output tests, basic
- * settings) flows through; the monitor acknowledges via event stream.
- */
-export async function sendDiagnosticCommand(
-  command: DiagnosticCommand
-): Promise<DiagnosticCommandResult> {
-  if (!child?.stdin?.writable) {
-    return {
-      ok: false,
-      message: "No diagnostic session is running.",
-    };
-  }
-  try {
-    child.stdin.write(JSON.stringify(command) + "\n");
-  } catch (error) {
-    return { ok: false, message: `Failed to send command: ${String(error)}` };
-  }
-  return { ok: true, message: "Command sent to the monitor." };
+export async function sendDiagnosticCommand(command: DiagnosticCommand): Promise<DiagnosticCommandResult> {
+  return host ? host.send(command) : { ok: false, message: "No diagnostic session is running." };
+}
+
+/** The monitor's read-only preflight for the setup wizard. Its own host, so
+ *  a running session is never disturbed; no device is opened. */
+export async function runPythonPreflight(): Promise<CablePreflight> {
+  const result = await new MonitorProcess(monitorScript, () => {}).preflight();
+  return {
+    ready: result.ready,
+    message: result.message ?? "",
+    bitness: result.bitness ?? null,
+    python: result.python ?? null,
+  };
 }

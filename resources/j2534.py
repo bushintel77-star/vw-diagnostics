@@ -19,8 +19,10 @@ import ctypes
 import struct
 import sys
 
-from ctypes import byref, c_char, c_char_p, c_void_p, create_string_buffer
-from ctypes import wintypes
+from ctypes import byref, c_char_p, c_void_p, create_string_buffer
+
+# Windows ULONG is always 32 bits, including when offline tests run on Linux.
+U = ctypes.c_uint32
 
 # --- J2534 constants (SAE J2534-1 v04.04, cross-checked against a reference
 # implementation — protocol/filter/config IDs live in spec-reserved ranges
@@ -30,6 +32,10 @@ STATUS_NOERROR = 0x00000000
 ERR_TIMEOUT = 0x00000009      # ReadMsgs returns this when the buffer is
                               # empty at timeout — normal idle, not an error
 ERR_BUFFER_OVERFLOW = 0x12
+ERR_BUFFER_EMPTY = 0x10
+TX_MSG_TYPE = 0x01
+START_OF_MESSAGE = 0x02
+TX_INDICATION = 0x08
 
 PROTO_CAN = 0x00000005
 PROTO_ISO15765 = 0x00000006
@@ -65,13 +71,15 @@ class PassThruMsg(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("ProtocolID", ctypes.c_ulong),
-        ("RxStatus", ctypes.c_ulong),
-        ("TxFlags", ctypes.c_ulong),
-        ("Timestamp", ctypes.c_ulong),
-        ("DataSize", ctypes.c_ulong),
-        ("ExtraDataIndex", ctypes.c_ulong),
-        ("Data", c_char * PASS_THRU_MSG_DATA_LEN),
+        ("ProtocolID", U),
+        ("RxStatus", U),
+        ("TxFlags", U),
+        ("Timestamp", U),
+        ("DataSize", U),
+        ("ExtraDataIndex", U),
+        # c_char arrays are returned as NUL-terminated bytes by ctypes.
+        # CAN IDs start with NULs, so use an unsigned byte buffer instead.
+        ("Data", ctypes.c_ubyte * PASS_THRU_MSG_DATA_LEN),
     ]
 
 
@@ -80,8 +88,8 @@ class SConfig(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("Parameter", ctypes.c_ulong),
-        ("Value", ctypes.c_ulong),
+        ("Parameter", U),
+        ("Value", U),
     ]
 
 
@@ -89,7 +97,7 @@ class SConfigList(ctypes.Structure):
     """SCONFIG_LIST — NumOfArgs + pointer to SCONFIG array."""
 
     _fields_ = [
-        ("NumOfArgs", ctypes.c_ulong),
+        ("NumOfArgs", U),
         ("ConfigPtr", ctypes.POINTER(SConfig)),
     ]
 
@@ -107,13 +115,12 @@ class J2534Device:
     def __init__(self, dll_path: str):
         # J2534 DLLs use stdcall; WinDLL on 64-bit Python can only load a
         # 64-bit DLL, so a bitness mismatch raises here with a clear trace.
-        self._dll = ctypes.WinDLL(dll_path)
-        self._bind_functions()
         self.device_id = None
         self.channel_id = None
+        self._dll = ctypes.WinDLL(dll_path)
+        self._bind_functions()
 
     def _bind_functions(self):
-        U = ctypes.c_ulong
         self._PassThruOpen = _bind(
             self._dll, "PassThruOpen", U, [c_void_p, ctypes.POINTER(U)])
         self._PassThruClose = _bind(
@@ -158,10 +165,11 @@ class J2534Device:
 
     # -- lifecycle ----------------------------------------------------------
 
-    def open(self, bitrate: int = 500000, response_id: int = 0x7E8):
+    def open(self, bitrate: int = 500000, response_id: int = 0x7E8,
+             request_id: int = 0x7E0):
         """Open the first device, connect ISO15765, set the flow-control
         filter so multi-frame responses reassemble in firmware."""
-        dev = ctypes.c_ulong(0)
+        dev = U(0)
         self._check(self._PassThruOpen(None, byref(dev)), "PassThruOpen")
         self.device_id = dev.value
 
@@ -177,7 +185,7 @@ class J2534Device:
             "api": api.value.decode("ascii", errors="replace"),
         }
 
-        chan = ctypes.c_ulong(0)
+        chan = U(0)
         self._check(
             self._PassThruConnect(
                 self.device_id, PROTO_ISO15765, 0, bitrate, byref(chan)),
@@ -194,22 +202,22 @@ class J2534Device:
                 byref(cfg_list), None),
             "Ioctl SET_CONFIG")
 
-        # Flow-control filter: answer the ECU's first frame with CF on the
-        # response ID; mask matches the ID bytes only.
+        # J2534 uses a four-byte big-endian CAN ID even for 11-bit CAN.
+        # Firmware generates flow control on the tester's request ID.
         mask = PassThruMsg()
         mask.ProtocolID = PROTO_ISO15765
-        mask.DataSize = 2
-        mask.Data = struct.pack(">H", response_id)
+        mask.DataSize = 4
+        mask.Data[:4] = b"\xff" * 4
         pattern = PassThruMsg()
         pattern.ProtocolID = PROTO_ISO15765
-        pattern.DataSize = 2
-        pattern.Data = struct.pack(">H", response_id)
+        pattern.DataSize = 4
+        pattern.Data[:4] = struct.pack(">I", response_id)
         flow = PassThruMsg()
         flow.ProtocolID = PROTO_ISO15765
-        flow.TxFlags = 0
-        flow.DataSize = 5
-        flow.Data = struct.pack(">H", response_id) + b"\x30\x00\x00"
-        fid = ctypes.c_ulong(0)
+        flow.TxFlags = ISO15765_FRAME_PAD
+        flow.DataSize = 4
+        flow.Data[:4] = struct.pack(">I", request_id)
+        fid = U(0)
         self._check(
             self._PassThruStartMsgFilter(
                 self.channel_id, FLOW_CONTROL_FILTER,
@@ -236,41 +244,52 @@ class J2534Device:
 
     # -- message I/O ---------------------------------------------------------
 
+    def clear_rx(self):
+        self._check(self._PassThruIoctl(
+            self.channel_id, IOCTL_CLEAR_RX_BUFFER, None, None), "Ioctl CLEAR_RX_BUFFER")
+
     def write_frame(self, can_id: int, data: bytes, timeout_ms: int = 1000):
         """Transmit one CAN frame (payload without the ID field)."""
         if self.channel_id is None:
             raise J2534Error(0xFFFFFFFF, "channel not open")
         msg = PassThruMsg()
         msg.ProtocolID = PROTO_ISO15765
-        msg.TxFlags = 0
-        payload = struct.pack(">H", can_id) + data
+        msg.TxFlags = ISO15765_FRAME_PAD
+        payload = struct.pack(">I", can_id) + data
+        if not data or len(data) > 4095:
+            raise ValueError("ISO15765 payload must contain 1..4095 bytes")
         msg.DataSize = len(payload)
-        msg.Data = payload
-        num = ctypes.c_ulong(1)
+        msg.Data[:len(payload)] = payload
+        num = U(1)
         self._check(
             self._PassThruWriteMsgs(
                 self.channel_id, byref(msg), byref(num), timeout_ms),
             "PassThruWriteMsgs")
+        if num.value != 1:
+            raise J2534Error(ERR_TIMEOUT, "PassThruWriteMsgs accepted no message")
 
-    def read_frames(self, timeout_ms: int = 1000, max_msgs: int = 8):
+    def read_frames(self, timeout_ms: int = 1000, max_msgs: int = 1):
         """Read up to max_msgs frames; returns list[(can_id, payload)].
         Empty list on timeout."""
         if self.channel_id is None:
             raise J2534Error(0xFFFFFFFF, "channel not open")
         msgs = (PassThruMsg * max_msgs)()
-        num = ctypes.c_ulong(max_msgs)
+        num = U(max_msgs)
         status = self._PassThruReadMsgs(
             self.channel_id, msgs, byref(num), timeout_ms)
-        if status == ERR_TIMEOUT:
-            return []  # no traffic within the window — normal idle
-        self._check(status, "PassThruReadMsgs")
+        # A timed-out bulk read may still have returned some messages.
+        if status not in (STATUS_NOERROR, ERR_TIMEOUT, ERR_BUFFER_EMPTY):
+            self._check(status, "PassThruReadMsgs")
         out = []
         for i in range(min(num.value, max_msgs)):
             m = msgs[i]
-            if m.DataSize < 2:
+            if (m.ProtocolID != PROTO_ISO15765
+                    or m.RxStatus & (TX_MSG_TYPE | START_OF_MESSAGE | TX_INDICATION)):
                 continue
-            can_id = struct.unpack(">H", bytes(m.Data[:2]))[0]
-            out.append((can_id, bytes(m.Data[2:m.DataSize])))
+            if not 4 < m.DataSize <= PASS_THRU_MSG_DATA_LEN:
+                continue
+            can_id = struct.unpack(">I", bytes(m.Data[:4]))[0]
+            out.append((can_id, bytes(m.Data[4:m.DataSize])))
         return out
 
 

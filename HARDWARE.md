@@ -28,7 +28,7 @@ at first connect, but adoption still needs confirming on the vehicle.
 ## 1. The pass-thru device (the one purchase that matters)
 
 The app talks ISO 15765-4 (CAN 500 kbps) through a **J2534 pass-thru
-device**. Any Windows-registered J2534 DLL works with `pyj2534`.
+device**. The bundled `resources/j2534.py` wrapper loads an existing Windows J2534 DLL. Actual adapter compatibility still needs a hardware test.
 
 | Device | Class | Notes |
 |---|---|---|
@@ -44,29 +44,121 @@ Rules of thumb:
   connection mid-write is how ECUs brick; buy the device with the
   reputation, not the price.
 
-## 2. Software setup (once)
+## 2. Software setup (existing legacy Openport driver)
 
-```bash
-pip install pyj2534
+Keep the driver confirmed for your clone. For the reported setup,
+`openport2_setup_1004341.exe` has installed `op20pt32.dll` version
+`1.01.0.4341`. Do not replace it with a newer Tactrix/EcuFlash package or
+run firmware updaters. The app carries only that pinned installer, locked
+with a passkey, and refuses to start a session when a newer Tactrix driver
+is installed (see [Cable setup wizard](#cable-setup-wizard)). The app never
+requests adapter firmware updates; vendor DLL behaviour remains vendor-controlled.
+
+The Python J2534 wrapper is included. **Do not run `pip install pyj2534`.**
+The interpreter must match the DLL architecture. A 32-bit driver requires
+32-bit Python (3.10 or newer), even on 64-bit Windows 11. Windows launchers
+try `py -3-32` first, then other interpreters using a read-only preflight.
+`VWD_PYTHON` is an authoritative path override; `PARSER_PYTHON` remains an alias.
+Neither silently falls back when the selected interpreter is incompatible.
+
+From the repository, check setup without loading the vendor DLL or opening USB:
+
+```powershell
+py -3-32 resources/j2534_monitor.py --preflight
 ```
 
-Install the vendor driver so its J2534 DLL registers with Windows
-(`HKLM\SOFTWARE\PassThruSupport.04.04`). The transport
-(`resources/uds.py`, `J2534Transport`) opens the first available
-device; enumeration via `listAvailiableDevices` is wired for when more
-than one DLL is registered.
+`ready: true` verifies registry/file/interpreter compatibility only. It is
+not proof that Windows permits the USB driver to load, or that the vehicle responds.
 
-**The interpreter bitness must match the vendor DLL.** A 64-bit Python
-cannot load a 32-bit PassThru DLL, and a 32-bit installer registers
-under `WOW6432Node` where a 64-bit process can't see it. The Openport
-2.0 clones ship a 32-bit `op20pt32.dll` (clones can't take post-2016
-official drivers), so they need a **32-bit Python**: install one and
-point the app at it with the `VWD_PYTHON` environment variable
-(`PARSER_PYTHON` still works as a deprecated alias). On connect failure
-the monitor logs a preflight — interpreter bitness plus every PassThru
-registration in both registry views — and the error names which case
-you're in: `pyj2534` missing, nothing registered, a wrong-bitness DLL,
-or the driver refusing the open.
+To pin an existing installation in the PowerShell window that starts the app:
+
+```powershell
+$env:VWD_PYTHON = (& py -3-32 -c "import sys; print(sys.executable)").Trim()
+$env:VWD_J2534_DLL = 'C:\Windows\SysWOW64\op20pt32.dll'
+$env:VWD_J2534_SHA256 = (Get-FileHash -LiteralPath $env:VWD_J2534_DLL -Algorithm SHA256).Hash
+& $env:VWD_PYTHON resources/j2534_monitor.py --preflight
+npm run dev
+```
+
+Record the hash while the known compatible driver is installed and keep it
+in your launcher. Do not recompute it after replacing the driver: the stored
+hash is what makes the app refuse a changed DLL. The same variables apply to
+the installed app and `npm run dev:web`. They do not modify Windows settings.
+
+The app reads both registry views under `HKLM\SOFTWARE\PassThruSupport.04.04`.
+When several compatible DLLs are registered, select one with `VWD_J2534_DLL`;
+the app will not open an arbitrary driver. The optional `VWD_J2534_SHA256`
+check runs before the DLL is loaded.
+
+### Windows 11 driver block (Code 39)
+
+Since the April 2026 Windows updates, Windows 11 (24H2 and later) no longer
+trusts kernel drivers signed under the old cross-signing program. The
+Openport 2.0 USB driver `openport.sys` from `openport2_setup_1004341.exe` is
+one of them. The cable still appears in Device Manager, but with a yellow
+mark and **Code 39**, and every J2534 open fails. When this happens the app
+names the Code 39 in its connection error; no app setting can get past it.
+
+Confirm it (read-only) from an administrator PowerShell with the cable in
+the PC only:
+
+```powershell
+Get-PnpDevice | ? FriendlyName -match 'openport|tactrix' | ft FriendlyName,Status,Problem -auto
+Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational' -MaxEvents 500 |
+  ? Message -match 'openport' | select -First 2 TimeCreated,Id,Message | fl
+```
+
+Options, least invasive first. None of them replaces the 1.01.0.4341 driver.
+
+1. **A Windows 10 PC**, or a **Windows 10 virtual machine** (VirtualBox with
+   the cable passed through over USB). The policy is not on Windows 10, so
+   the legacy driver loads there and the host PC stays untouched.
+2. **Remove the policy** on the Windows 11 PC, as Microsoft documents for
+   July 2026 and later builds: `CiTool.exe --remove-policy
+   "{8F9CB695-5D48-48D6-A329-7202B44607E3}"` from an administrator prompt,
+   then restart. This lowers driver security for the whole PC, there is no
+   per-driver exception, and Microsoft's only way back is restoring a
+   backup or reinstalling Windows.
+
+The "Microsoft Vulnerable Driver Blocklist" switch under Windows Security >
+Device security > Core isolation is a different list and does not lift
+this block. Sources: [The Windows Driver Policy](https://support.microsoft.com/en-us/windows/hardware/drivers/the-windows-driver-policy),
+[Removing trust for the cross-signed driver program](https://techcommunity.microsoft.com/blog/windows-itpro-blog/advancing-windows-driver-security-removing-trust-for-the-cross-signed-driver-pro/4504818).
+
+### Cable setup wizard
+
+The cable chip in the dashboard header opens **Cable setup**. It also opens by
+itself when something needs fixing: no driver, or Code 28/39/other. It runs
+the same read-only checks as this section: Windows build, the J2534
+registration, the cable's Device Manager state (present devices only, polled
+every few seconds), and the `--preflight` Python check. The step follows live
+status, so plugging the cable in or finishing the installer moves it on
+without a click. On Windows 11 with Code 39 it explains the block and points
+to the Windows 10 options above. It never offers to change security settings.
+
+**Update blocker.** Every check reads the registered Tactrix DLL's file
+version. Anything newer than `1.01.0.4341` (for example after installing
+EcuFlash) is treated as a danger to a clone cable's firmware: the wizard
+blocks with uninstall-and-reinstall steps, and Start Session is refused. The
+main process enforces this too, not just the UI.
+
+**Driver locked inside the app.** The installer ships in every build,
+including the website download, but only as AES-256-GCM ciphertext. The key
+comes from a passkey (scrypt, N=2^17), so without the passkey the download
+holds no usable driver. To lock it, or to change the passkey:
+
+```powershell
+npm run driver:encrypt          # verifies the pinned SHA-256, asks for a passkey (hidden, 10+ characters)
+```
+
+That writes `resources/driver/openport-driver.enc` and `.json`. Commit both;
+they are safe to publish. The plain `.exe` is gitignored and never packaged,
+and `release:win` refuses to build without the locked driver. The ciphertext
+is public, so the passkey's length is the real protection: use a phrase. In
+the wizard, a correct passkey decrypts the installer in memory for 10
+minutes (five wrong entries lock it for a minute). Install writes it to a
+fresh temp folder, re-checks its SHA-256, runs it through the Windows (UAC)
+prompt and deletes it.
 
 ## 3. First-connect checklist (in order)
 
@@ -181,9 +273,10 @@ these for the external bench flash; it never applies them itself.
 
 | Symptom | Cause / fix |
 |---|---|
-| "pyj2534 is not installed" | `pip install pyj2534` in the monitor's interpreter (VWD_PYTHON) |
+| Missing `j2534.py` or `uds.py` | Rebuild/reinstall the app with all three bundled Python files; no pip package is required |
 | "registered only in the 32-bit registry view" | 32-bit vendor DLL (Openport clone) under a 64-bit Python — install a 32-bit Python, set `VWD_PYTHON` |
+| "Code 39" in the connection error / yellow mark in Device Manager | Windows 11 is blocking the legacy `openport.sys` — see §2, Windows 11 driver block |
 | "No J2534 PassThru device is registered" | Vendor J2534 driver not installed — install it, check the preflight log lines |
 | Connects, no DID answers | Wrong pins — the Amarok uses pins 6/14 for CAN; check the adapter |
 | VIN reads, rail/boost/pedal missing | Candidate DIDs didn't answer — update `DID_CANDIDATES` from label data |
-| Reads drop under load | Budget cable — lower `LIVE_INTERVAL_S`, or replace device |
+| Reads drop under load | Budget cable — increase `LIVE_INTERVAL_S`, or replace device |

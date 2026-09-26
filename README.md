@@ -24,10 +24,10 @@ This Electron boilerplate enables developers to quickly build cross-platform app
 
 ```bash
 npm run dev       # the Electron app (real pipeline: main process spawns the Python monitor)
-npm run dev:web   # browser viewer at http://localhost:5174 — no Electron, page-local demo simulation
+npm run dev:web   # browser viewer at http://localhost:5174 — real monitor through the local bridge
 ```
 
-In a plain browser there is no preload bridge, so `src/renderer/src/web/demoBridge.ts` installs an equivalent `window.context` implemented in the page: it mirrors the monitor's event stream, catalogs, and commands (auto-starts a simulated session; the header shows a "Browser demo" badge). The Python monitor remains the source of truth for the real app.
+In a plain browser, `src/renderer/src/web/liveBridge.ts` connects to the local monitor bridge. Start Session attempts a real hardware connection. Without the bridge the page reports not connected; no simulated product mode is available.
 
 ### Option 1 (Recommended): Use `npx electron-react-shadcn` to create a new project.
 
@@ -113,7 +113,7 @@ await window.context.stopDiagnostic();
 unsubscribe();
 ```
 
-To connect hardware: `pip install pyj2534` in a Python whose bitness matches the vendor DLL (a 32-bit `op20pt32.dll` needs a 32-bit interpreter — point `VWD_PYTHON` at it), install the vendor driver, connect the pass-thru device, Start Session. `HARDWARE.md` covers the full setup and first-connect checklist.
+To connect hardware: use the included Python wrapper with a Python whose bitness matches the existing vendor DLL (a 32-bit `op20pt32.dll` needs a 32-bit interpreter — point `VWD_PYTHON` at it), preserve the compatible legacy driver, connect the pass-thru device, Start Session. `HARDWARE.md` covers the full setup and first-connect checklist.
 
 ## Packaging & distribution
 
@@ -135,15 +135,13 @@ If you enable Windows Developer Mode (Settings → System → For developers), y
 
 ### Publishing the landing page + download
 
-`site/index.html` is a self-contained landing page (dark theme, matches the app icon) with a download button and install guide. To publish:
+`site/index.html` is a self-contained landing page (dark theme, matches the app icon) with a download button and install guide. It is served from the `gh-pages` branch at https://bushintel77-star.github.io/vw-diagnostics/, together with `update-floor.json` (the kill-switch floor the app checks on launch). To ship a version:
 
-1. Create a GitHub repo and push this project.
-2. Cut a release with the installer attached:
+1. Cut a release with the installer attached:
    ```
-   gh release create v1.0.0 dist/vw-diagnostics-setup.exe --title "v1.0.0"
+   gh release create vX.Y.Z dist/vw-diagnostics-setup.exe --title "vX.Y.Z"
    ```
-3. Replace `YOUR-USERNAME` in `site/index.html` (two links: download + source).
-4. Host `site/` anywhere static — GitHub Pages (Settings → Pages → deploy from the `site/` folder), Netlify drop, or Cloudflare Pages.
+2. Copy any changed `site/` files to the `gh-pages` branch.
 
 The download link uses the `releases/latest/download/vw-diagnostics-setup.exe` pattern with a version-stable filename, so it always serves the newest release without editing the page again.
 
@@ -183,3 +181,18 @@ The download link uses the `releases/latest/download/vw-diagnostics-setup.exe` p
 ├── tsconfig.node.json              # TypeScript configuration for Node.js
 └── tsconfig.web.json               # TypeScript configuration for web
 ```
+
+## Offline regression checks
+
+```powershell
+python -m unittest discover -s tests -v
+python resources/uds.py --selftest
+python resources/j2534_monitor.py --selftest
+npm test
+npm run build
+```
+
+The driver tests use a fake DLL. `--preflight` only inspects the registry,
+DLL headers and optional hash; it does not load the driver or contact USB.
+See HARDWARE.md for the legacy Openport 1.01.0.4341 setup and driver pinning.
+Hardware compatibility remains unverified until a controlled connection test.

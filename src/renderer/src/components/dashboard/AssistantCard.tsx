@@ -20,14 +20,14 @@ const severityColor = (severity: string) =>
   severity === "high"
     ? "bg-destructive"
     : severity === "medium"
-      ? "bg-chart-4"
+      ? "bg-warning"
       : "bg-chart-2";
 
 const labelColor = (label: string) =>
   label === "Good"
     ? "text-chart-2"
     : label === "Fair"
-      ? "text-chart-4"
+      ? "text-warning"
       : "text-destructive";
 
 const CHANNEL_NAMES: Partial<Record<keyof LiveValues, string>> = {
@@ -46,7 +46,7 @@ const stateDot = (state: ChannelState["state"]) =>
   state === "abnormal"
     ? "bg-destructive"
     : state === "elevated"
-      ? "bg-chart-4"
+      ? "bg-warning"
       : state === "normal"
         ? "bg-chart-2"
         : "bg-muted-foreground/40";
@@ -65,7 +65,7 @@ const AssistantCard = ({
   <Card className="flex flex-col">
     <CardHeader>
       <CardTitle className="flex items-center gap-2">
-        <Sparkles className="size-4 text-chart-1" />
+        <Sparkles className="size-4 text-signal" />
         AI Diagnostic Assistant
       </CardTitle>
       <CardDescription>
@@ -120,8 +120,8 @@ const AssistantCard = ({
         )}
 
         {analysis.stream && analysis.stream.predictions.length > 0 && (
-          <div className="space-y-2 rounded-lg border border-chart-4/40 bg-chart-4/10 p-3">
-            <p className="flex items-center gap-1.5 text-xs font-semibold text-chart-4">
+          <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-warning">
               <TrendingUp className="size-3.5" />
               Predictive alerts
             </p>
@@ -201,7 +201,7 @@ const AssistantCard = ({
                       channel.state === "learning"
                         ? "text-muted-foreground/50"
                         : channel.zScore >= 0
-                          ? "text-chart-4"
+                          ? "text-warning"
                           : "text-chart-3"
                     }`}
                   >

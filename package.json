@@ -1,6 +1,6 @@
 {
   "name": "vw-diagnostics",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Desktop diagnostics and tuning dashboard for the VW 3.0 V6 TDI",
   "main": "./out/main/index.js",
   "author": "bushintel77-star",
@@ -16,13 +16,15 @@
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
-    "release:win": "npm run build && electron-builder --win --dir && node scripts/edit-exe.mjs && electron-builder --win nsis --prepackaged dist/win-unpacked",
+    "release:win": "node scripts/encrypt-driver.mjs --check && npm run build && electron-builder --win --dir && node scripts/edit-exe.mjs && electron-builder --win nsis --prepackaged dist/win-unpacked",
+    "driver:encrypt": "node scripts/encrypt-driver.mjs",
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "test": "npm run test:unit",
-    "coverage": "vitest run --coverage"
+    "test": "npm run test:unit && npm run test:process",
+    "coverage": "vitest run --coverage",
+    "test:process": "node --test tests/monitor-process.test.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",

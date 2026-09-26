@@ -136,3 +136,6 @@ dist
 __pycache__/
 .mimosa/
 .zcode/
+
+# The driver is committed only encrypted; a plain installer must never be
+resources/driver/*.exe

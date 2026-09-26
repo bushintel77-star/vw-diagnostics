@@ -44,7 +44,7 @@ const Gauge = ({
   dangerAt,
   history,
 }: GaugeProps) => {
-  const hasValue = value !== null;
+  const hasValue = value != null && Number.isFinite(value);
   const fraction = hasValue
     ? Math.min(Math.max((value - min) / (max - min), 0), 1)
     : 0;
@@ -54,8 +54,8 @@ const Gauge = ({
       : dangerAt !== undefined && value >= dangerAt
         ? "stroke-destructive"
         : warnAt !== undefined && value >= warnAt
-          ? "stroke-chart-4"
-          : "stroke-chart-1";
+          ? "stroke-warning"
+          : "stroke-signal";
   const display = hasValue
     ? value.toLocaleString(undefined, {
         minimumFractionDigits: decimals,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -26,9 +26,18 @@ import DeletionPanel from "@/components/dashboard/DeletionPanel";
 import ModsPanel, { ScopeCard } from "@/components/dashboard/ModsPanel";
 import UpdateBanner from "@/components/dashboard/UpdateBanner";
 import UpdateGate from "@/components/dashboard/UpdateGate";
+import VersionBadge from "@/components/dashboard/VersionBadge";
+import ConnectionProgress from "@/components/dashboard/ConnectionProgress";
+import KeyNumbers, { KeyChannel, SessionStats, foldStats } from "@/components/dashboard/KeyNumbers";
+import RaceModeToggle from "@/components/dashboard/RaceModeToggle";
+import StatusBar from "@/components/dashboard/StatusBar";
+import { Skeleton } from "@/components/ui/skeleton";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
 import WorkflowGuide from "@/components/dashboard/WorkflowGuide";
+import CableSetupWizard from "@/components/setup/CableSetupWizard";
+import CableStatusChip from "@/components/setup/CableStatusChip";
+import { useCableSetup } from "@/components/setup/useCableSetup";
 import { isBrowserLive } from "@/web/liveBridge";
 import {
   DiagnosticAnalysisEvent,
@@ -76,6 +85,14 @@ const GAUGES: GaugeConfig[] = [
   { key: "speedKph", label: "Vehicle Speed", unit: "km/h", min: 0, max: 200 },
 ];
 
+// The six numbers that lead the screen (telemetry hierarchy); the full
+// gauge set stays below.
+const KEY_CHANNELS: KeyChannel[] = (
+  ["rpm", "boostPressureKpa", "railPressureBar", "coolantTempC", "engineLoadPct", "batteryV"] as const
+).map((key) => GAUGES.find((gauge) => gauge.key === key)!);
+const KEY_KEYS = KEY_CHANNELS.map((channel) => channel.key);
+const RATE_WINDOW_MS = 5000;
+
 const HISTORY_LENGTH = 120; // ~60 s at 2 samples/s
 const STALE_AFTER_MS = 4000; // no live event for this long while running = stale
 
@@ -115,15 +132,20 @@ const App = () => {
   const [history, setHistory] = useState<Partial<Record<keyof LiveValues, number[]>>>({});
   const [selectedChannel, setSelectedChannel] = useState<keyof LiveValues>("rpm");
   const [updates, setUpdates] = useState<number>(0);
-  const [log, setLog] = useState<string[]>([]);
+  const [log, setLog] = useState<{ id: number; text: string }[]>([]);
+  const logId = useRef(0);
   const [busy, setBusy] = useState<boolean>(false);
   const [verification, setVerification] = useState<DiagnosticVerificationEvent | null>(null);
   const [lastLiveAt, setLastLiveAt] = useState<number | null>(null);
+  const [sessionStats, setSessionStats] = useState<SessionStats>({});
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  const liveTimes = useRef<number[]>([]);
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [dutyProfile, setDutyProfile] = useState<DutyProfile>("standard");
 
   const pushLog = (text: string): void => {
-    const entry = `${new Date().toLocaleTimeString()}  ${text}`;
+    // A counter id, not the text: the same message can repeat in one second.
+    const entry = { id: ++logId.current, text: `${new Date().toLocaleTimeString()}  ${text}` };
     setLog((prev) => [entry, ...prev].slice(0, 10));
   };
 
@@ -139,14 +161,25 @@ const App = () => {
         case "status":
           setStatus(event);
           pushLog(event.message);
-          if (event.phase === "disconnected" || event.phase === "error") {
+          if (event.phase === "connected") setConnectedAt((at) => at ?? Date.now());
+          if (["starting", "disconnected", "error"].includes(event.phase)) {
             // Session data ends with the session — a stale "clean" read or
             // frozen gauge must not persist as if it were current state.
             setCodes(null);
             setLive(null);
             setHistory({});
+            setSessionStats({});
+            setConnectedAt(null);
+            liveTimes.current = [];
             setLastLiveAt(null);
             setUpdates(0);
+            setInfo(null);
+            setDids(null);
+            setAnalysis(null);
+            setVerification(null);
+            setFlash(null);
+            setDeletions(null);
+            setMods(null);
           }
           break;
         case "info":
@@ -166,6 +199,10 @@ const App = () => {
           setLive(event.values);
           setLastLiveAt(Date.now());
           setUpdates((n) => n + 1);
+          setSessionStats((prev) => foldStats(prev, event.values, KEY_KEYS));
+          liveTimes.current = [...liveTimes.current, Date.now()].filter(
+            (at) => Date.now() - at <= RATE_WINDOW_MS
+          );
           setHistory((prev) => {
             const next: Partial<Record<keyof LiveValues, number[]>> = {};
             for (const gauge of GAUGES) {
@@ -173,7 +210,7 @@ const App = () => {
               const value = event.values[gauge.key];
               // A null channel is absence of data — it is not appended to
               // the rolling history as if it were a reading.
-              next[gauge.key] = value === null
+              next[gauge.key] = value == null || !Number.isFinite(value)
                 ? samples
                 : [...samples, value].slice(-HISTORY_LENGTH);
             }
@@ -212,8 +249,16 @@ const App = () => {
           setCodes(null);
           setLive(null);
           setHistory({});
+          setSessionStats({});
+          setConnectedAt(null);
+          liveTimes.current = [];
           setLastLiveAt(null);
           setUpdates(0);
+          setInfo(null);
+          setDids(null);
+          setAnalysis(null);
+          setVerification(null);
+          setFlash(null);
           pushLog(`Error: ${event.message}`);
           break;
       }
@@ -224,6 +269,14 @@ const App = () => {
   const running =
     busy || (status !== null && ACTIVE_PHASES.includes(status.phase));
 
+  // Plug-and-play cable setup: polls while idle, opens itself on problems.
+  const cableSetup = useCableSetup({ sessionActive: running });
+  // A newer Tactrix driver can reflash (brick) a clone: no session until the
+  // safe version is back. The main process enforces this too.
+  const driverTooNew =
+    cableSetup.status?.driverInstalled === true &&
+    cableSetup.status.driverVersionState === "newer";
+
   const stale =
     running &&
     !busy &&
@@ -231,13 +284,23 @@ const App = () => {
     nowTick - lastLiveAt > STALE_AFTER_MS;
   const secondsSinceUpdate =
     lastLiveAt === null ? null : Math.max(0, Math.round((nowTick - lastLiveAt) / 1000));
+  // Real samples per second over the last few seconds; null when not live.
+  const sampleHz =
+    running && live !== null
+      ? liveTimes.current.filter((at) => nowTick - at <= RATE_WINDOW_MS).length / (RATE_WINDOW_MS / 1000)
+      : null;
+  const sessionSeconds =
+    running && connectedAt !== null ? Math.max(0, Math.floor((nowTick - connectedAt) / 1000)) : null;
   const handleStart = async () => {
     setBusy(true);
     try {
       const result = await window.context.startDiagnostic();
-      if (!result.started) pushLog(result.message);
+      if (!result.started) {
+        pushLog(result.message);
+        setStatus({ type: "status", phase: "error", mode: "live", message: result.message });
+      }
     } catch (error) {
-      console.error("Failed to start the diagnostic session:", error);
+      setStatus({ type: "status", phase: "error", mode: "live", message: `Cannot start session: ${String(error)}` });
     } finally {
       setBusy(false);
     }
@@ -354,7 +417,7 @@ const App = () => {
       postFlashHealthCheck: verification,
       liveSnapshot: live,
       trends: history,
-      eventLog: log,
+      eventLog: log.map((entry) => entry.text),
     };
     const blob = new Blob([JSON.stringify(report, null, 2)], {
       type: "application/json",
@@ -376,32 +439,51 @@ const App = () => {
       <UpdateBanner />
       {/* draggable getting-started sticky — persisted open/closed + position */}
       <WorkflowGuide />
+      {/* guided cable setup — self-checks, passkey-gated driver, live detection */}
+      <CableSetupWizard
+        controller={cableSetup}
+        sessionActive={running}
+        onStartSession={() => {
+          cableSetup.closeWizard();
+          void handleStart();
+        }}
+      />
 
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Activity className="size-8 text-chart-1" />
+          <Activity className="size-8 text-signal" />
           <div>
-            <h1 className="font-serif text-2xl font-bold tracking-tight">
+            <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold tracking-tight">
               VW Diagnostic Dashboard
+              <VersionBadge />
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              J2534 pass-thru monitor spawned from the main process (
-              <code className="rounded bg-muted px-1">
-                resources/j2534_monitor.py
-              </code>
-              )
+              VW 3.0 V6 TDI · J2534 pass-thru diagnostics
             </p>
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <CableStatusChip
+            status={cableSetup.status}
+            justConnected={cableSetup.justConnected}
+            onOpen={cableSetup.openWizard}
+          />
           {isBrowserLive() && (
             <Badge variant="outline" className="border-chart-2/50 text-chart-2">
               Live Python monitor
             </Badge>
           )}
+          <RaceModeToggle />
           <StatusBadge status={status} />
-          <Button onClick={handleStart} disabled={running || busy}>
+          {/* the primary action: the biggest target on the screen */}
+          <Button
+            size="lg"
+            className="px-6 text-base"
+            onClick={handleStart}
+            disabled={running || busy || driverTooNew}
+            title={driverTooNew ? "Blocked: a newer Tactrix driver could brick the cable. Open Cable setup." : undefined}
+          >
             <Play className="fill-current" />
             Start Session
           </Button>
@@ -426,6 +508,19 @@ const App = () => {
         </div>
       </header>
 
+      {/* one main landmark: screen-reader users can jump straight here */}
+      <main className="flex flex-col gap-6">
+
+      {/* session context strip: link, ECU, bus, sample rate, clock, data age */}
+      <StatusBar
+        status={status}
+        info={info}
+        sampleHz={sampleHz}
+        sessionSeconds={sessionSeconds}
+        dataAgeSeconds={running ? secondsSinceUpdate : null}
+        stale={stale}
+      />
+
       {/* error banner */}
       {status?.phase === "error" && (
         <Card className="border-destructive/50 bg-destructive/10">
@@ -436,26 +531,46 @@ const App = () => {
         </Card>
       )}
 
+      {/* connecting — each step advances on a real monitor event */}
+      {running && live === null && status?.phase !== "error" && (
+        <ConnectionProgress
+          phase={status?.phase ?? null}
+          hasInfo={info !== null}
+          hasDids={dids !== null}
+          hasLive={false}
+        />
+      )}
+
       {/* no interface attached — what the user needs to do */}
       {!running && (status === null || status.phase === "disconnected") && (
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <Cable className="size-5 shrink-0 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              No interface connected — attach a J2534 pass-thru device,
-              install its vendor driver and the{" "}
-              <code className="rounded bg-muted px-1">pyj2534</code> package,
-              then Start Session to connect to the vehicle.
-            </p>
+            {cableSetup.status?.cable === "ready" ? (
+              <p className="flex-1 text-sm text-muted-foreground">
+                Cable ready — plug it into the truck's OBD port, turn the
+                ignition on, then Start Session.
+              </p>
+            ) : (
+              <p className="flex-1 text-sm text-muted-foreground">
+                No interface connected — plug the cable into this computer,
+                or use Set up cable to check the driver and Python for you.
+              </p>
+            )}
+            {cableSetup.status?.platformSupported && cableSetup.status.cable !== "ready" && (
+              <Button variant="outline" size="sm" className="shrink-0 rounded-full" onClick={cableSetup.openWizard}>
+                Set up cable
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
 
       {/* stale-data watchdog */}
       {stale && (
-        <Card className="border-chart-4/50">
+        <Card className="border-warning/50">
           <CardContent className="flex items-center gap-3 p-4">
-            <AlertTriangle className="size-5 shrink-0 text-chart-4" />
+            <AlertTriangle className="size-5 shrink-0 text-warning" />
             <p className="text-sm">
               Data stale — last live update{" "}
               <span className="font-semibold tabular-nums">
@@ -467,6 +582,9 @@ const App = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* the numbers that matter, biggest first */}
+      <KeyNumbers channels={KEY_CHANNELS} live={live} stats={sessionStats} stale={stale} />
 
       {/* instrument-cluster tell-tales */}
       <WarningLights codes={codes} live={live} />
@@ -495,9 +613,9 @@ const App = () => {
             <CardContent className="space-y-3">
               {running ? (
                 <>
-                  <div className="h-5 w-48 animate-pulse rounded-md bg-muted" />
-                  <div className="h-4 w-full animate-pulse rounded-md bg-muted" />
-                  <div className="h-4 w-3/4 animate-pulse rounded-md bg-muted" />
+                  <Skeleton className="h-5 w-48" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">
@@ -578,15 +696,13 @@ const App = () => {
             intermittent faults show up in the history, not the instant value
           </CardDescription>
         </CardHeader>
-        <CardContent className={stale ? "opacity-40 grayscale transition-all" : "transition-all"}>
+        {/* stale: greyed but readable; the stale banner above says why */}
+        <CardContent className={stale ? "grayscale transition-all" : "transition-all"}>
           {live === null ? (
             running ? (
               <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
                 {GAUGES.map((gauge) => (
-                  <div
-                    key={gauge.key}
-                    className="mx-auto h-24 w-24 animate-pulse rounded-full bg-muted"
-                  />
+                  <Skeleton key={gauge.key} className="mx-auto h-24 w-24 rounded-full" />
                 ))}
               </div>
             ) : (
@@ -596,12 +712,12 @@ const App = () => {
               </p>
             )
           ) : (
-            <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
+            <div className="grid grid-cols-3 gap-6 animate-fade-up sm:grid-cols-5 motion-reduce:animate-none">
               {GAUGES.map((gauge) => (
                 <Gauge
                   key={gauge.key}
                   label={gauge.label}
-                  value={live[gauge.key]}
+                  value={live[gauge.key] ?? null}
                   unit={gauge.unit}
                   min={gauge.min}
                   max={gauge.max}
@@ -665,12 +781,13 @@ const App = () => {
           ) : (
             <ul className="space-y-1 font-mono text-xs text-muted-foreground">
               {log.map((entry) => (
-                <li key={entry}>{entry}</li>
+                <li key={entry.id}>{entry.text}</li>
               ))}
             </ul>
           )}
         </CardContent>
       </Card>
+      </main>
     </div>
   );
 };

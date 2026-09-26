@@ -797,6 +797,10 @@ class RealTransport:
         self.uds = uds
         self.did_map = dict(uds.DID_MAP)  # copy — probing mutates per session
         self.info_cache: dict | None = None
+        # Set when the host closes stdin (Stop Session). Live sampling checks
+        # it between DIDs so a silent ECU cannot hold the device open until
+        # the host gives up and kills the process mid-J2534 call.
+        self.stop_event = threading.Event()
 
     def _read_ascii_did(self, did: int) -> str | None:
         """One identification DID, read independently. None = the ECU did
@@ -811,7 +815,13 @@ class RealTransport:
 
     def read_info(self) -> dict:
         if self.info_cache is None:
-            self.client.enter_session(0x03)
+            # Identification, DID and DTC reads all work in the default
+            # session; extended is only a courtesy, so a refusal is logged
+            # rather than ending the session before any data is shown.
+            try:
+                self.client.enter_session(0x03)
+            except Exception as exc:
+                emit(log(f"Extended diagnostic session refused ({exc}); continuing in the default session."))
             try:
                 vin = self.client.read_vin()
             except Exception:
@@ -861,8 +871,14 @@ class RealTransport:
         return out
 
     def clear_dtcs(self) -> int:
+        """Clear via 0x14 and return how many codes were present before.
+        (The ECU may re-report a fault that is still failing.)"""
+        try:
+            before = len(self.client.read_dtcs())
+        except Exception:
+            before = 0
         self.client.clear_dtcs()
-        return 0
+        return before
 
     def remove_codes(self, codes: list) -> int:
         # Code suppression is part of the Phase 2 write calibration (TODO).
@@ -906,11 +922,22 @@ class RealTransport:
         # Failed reads come back as None and are propagated as None: a
         # dead channel renders as no-data downstream (gauge em-dash, no
         # history point), never as the last value frozen in place.
-        return self.live_client.read_live(self.did_map)
+        values = {}
+        for name, entry in self.did_map.items():
+            if self.stop_event.is_set():
+                values[name] = None
+                continue
+            values.update(self.live_client.read_live({name: entry}))
+        for channel in self.uds.DID_CANDIDATES:
+            values.setdefault(channel, None)
+        return values
+
+    def close(self) -> None:
+        self.client.transport.close()
 
 
 def open_real_transport():
-    """Wire the real pyJ2534 pass-thru device here once an ECU is available."""
+    """Open the explicitly selected or uniquely registered existing DLL."""
     try:
         import uds
     except ImportError as exc:
@@ -925,6 +952,10 @@ def open_real_transport():
         for line in uds.describe_passthru_setup():
             emit(log(f"J2534 preflight: {line}"))
         raise RuntimeError(str(exc)) from exc
+    if hasattr(device, "versions"):
+        versions = device.versions()
+        emit(log(f"Adapter opened: DLL {versions.get('dll', '?')}; "
+                 f"firmware {versions.get('firmware', '?')}; API {versions.get('api', '?')}"))
     client = uds.UdsClient(device)
     # One responsePending is normal; two means the channel is genuinely
     # busy — null it out and keep the display loop moving. Long-running
@@ -941,7 +972,7 @@ def open_real_transport():
 # ---------------------------------------------------------------------------
 
 
-def start_command_worker() -> queue.Queue:
+def start_command_worker(stop_event: threading.Event | None = None) -> queue.Queue:
     commands: queue.Queue = queue.Queue()
 
     def reader() -> None:
@@ -951,11 +982,14 @@ def start_command_worker() -> queue.Queue:
                 if not line:
                     continue
                 try:
-                    commands.put(json.loads(line))
+                    command = json.loads(line)
+                    commands.put(command if isinstance(command, dict) else {"cmd": "_malformed"})
                 except json.JSONDecodeError:
                     commands.put({"cmd": "_malformed"})
         finally:
             # stdin closed: the parent process is gone, stop the session.
+            if stop_event is not None:
+                stop_event.set()
             commands.put({"cmd": "_eof"})
 
     threading.Thread(target=reader, daemon=True).start()
@@ -1070,9 +1104,11 @@ def handle_command(cmd: dict, transport, active_deletions: set, active_mods: set
 
     if name == "clear_dtc":
         count = transport.clear_dtcs()
-        emit(log(f"Cleared {count} fault code(s) (UDS 0x14)."))
-        emit({"type": "dtc", "codes": transport.read_dtcs()})
-        emit(build_analysis(transport.read_dtcs(), None,
+        emit(log(f"Clear accepted by the ECU: {count} fault code(s) were stored (UDS 0x14)."))
+        codes = transport.read_dtcs()
+        session["dtcs"] = codes
+        emit({"type": "dtc", "codes": codes})
+        emit(build_analysis(codes, None,
                             stream=tracker.snapshot(), provenance=tracker.provenance()))
 
     elif name == "delete_component":
@@ -1190,20 +1226,23 @@ def run(duration: float | None, warmup: int, stream_every: int) -> None:
     emit(status("connecting", "Opening J2534 pass-thru device…", "live"))
     try:
         transport = open_real_transport()
-    except RuntimeError as exc:
+    except Exception as exc:
         emit(status("error", str(exc), "live"))
-        # Block on stdin rather than exiting so the error state persists on
-        # screen. The main process kills us on Stop; stdin EOF (parent
-        # gone) ends the wait cleanly.
-        sys.stdin.read()
+        # Hosts preserve error events after exit; release the process so
+        # Start Session can retry after the user fixes the setup.
         return
     emit(status("connected", f"Connected via {transport.device}", "live"))
-    _run_session(transport, duration, warmup, stream_every)
+    try:
+        _run_session(transport, duration, warmup, stream_every)
+    except Exception as exc:
+        emit(status("error", f"{type(exc).__name__}: {exc}", "live"))
+    finally:
+        transport.close()
 
 
 def _run_session(transport, duration: float | None, warmup: int,
                  stream_every: int) -> None:
-    commands = start_command_worker()
+    commands = start_command_worker(getattr(transport, "stop_event", None))
     ecu_info = transport.read_info()
     vin = ecu_info.get("vin", "")
     emit({"type": "info", "info": ecu_info})
@@ -1226,15 +1265,26 @@ def _run_session(transport, duration: float | None, warmup: int,
     active_deletions: set = set()
     active_mods: set = set()
     tracker = StreamTracker(warmup=warmup)
+    initial_codes = transport.read_dtcs()
     session: dict = {
-        "baseline_codes": {c["code"] for c in transport.read_dtcs()},
+        "baseline_codes": {c["code"] for c in initial_codes},
         "last_values": None,
+        "dtcs": initial_codes,
     }
+
+    def current_dtcs() -> list:
+        # Periodic re-reads ride over a transient timeout with the last
+        # good list instead of ending the session.
+        try:
+            session["dtcs"] = transport.read_dtcs()
+        except Exception as exc:
+            emit(log(f"Fault-code refresh failed ({exc}); showing the last good read."))
+        return session["dtcs"]
 
     first_sample = transport.sample(0)
     session["last_values"] = first_sample
     tracker.update(first_sample)
-    emit(build_analysis(transport.read_dtcs(), first_sample,
+    emit(build_analysis(session["dtcs"], first_sample,
                         stream=tracker.snapshot(), provenance=tracker.provenance()))
     emit({"type": "live", "values": first_sample, "timestamp": now_iso()})
     emit_deletions(active_deletions)
@@ -1261,7 +1311,13 @@ def _run_session(transport, duration: float | None, warmup: int,
                 if cmd.get("cmd") == "_eof":
                     running = False
                     break
-                handle_command(cmd, transport, active_deletions, active_mods, tracker, vin, session)
+                try:
+                    handle_command(cmd, transport, active_deletions, active_mods, tracker, vin, session)
+                except Exception as exc:
+                    # A refused or timed-out command (e.g. the ECU rejecting
+                    # a clear with the engine running) is reported, never
+                    # allowed to end the live session.
+                    emit(log(f"Command '{cmd.get('cmd')}' failed: {exc}"))
 
             if not running:
                 break
@@ -1275,7 +1331,7 @@ def _run_session(transport, duration: float | None, warmup: int,
             if new_alerts:
                 for message in new_alerts:
                     emit(log(f"\u26a0 {message}"))
-                emit(build_analysis(transport.read_dtcs(), values, list(active_alerts.values()),
+                emit(build_analysis(current_dtcs(), values, list(active_alerts.values()),
                                     stream=tracker.snapshot(), provenance=tracker.provenance()))
 
             # Tier-1 statistical layer: learned-baseline deviations and
@@ -1285,7 +1341,7 @@ def _run_session(transport, duration: float | None, warmup: int,
 
             # Continuous analysis refresh on the streaming cadence.
             if sample_index % stream_every == 0:
-                emit(build_analysis(transport.read_dtcs(), values,
+                emit(build_analysis(current_dtcs(), values,
                                     stream=tracker.snapshot(), provenance=tracker.provenance()))
 
             # Hand baselines to the main process for cross-session persistence.
@@ -1504,7 +1560,7 @@ def _selftest_writes(fixture) -> int:
         rt = RealTransport(primary, poll)
         rt.sample(0)
         checks.append(("live polling uses the tight-bound client",
-                       poll.read_live_calls == 1 and primary.read_live_calls == 0))
+                       poll.read_live_calls >= 1 and primary.read_live_calls == 0))
 
         import uds as _uds_mod
         made = []
@@ -1533,76 +1589,8 @@ def _selftest_writes(fixture) -> int:
             _uds_mod.UdsClient = saved_client
             _uds_mod.J2534Transport = saved_transport
 
-        # --- J2534 preflight: honest 'why won't it open' diagnostics ---
-        # Registry access and the pyj2534 module are stubbed; no real
-        # hardware or registry is needed.
-        import types as _types
-
-        def _failing_pyj2534(error: str):
-            mod = _types.ModuleType("pyj2534")
-            mod.ISO15765 = 6
-            mod.ISO15765_FRAME_PAD = 0x40
-            mod.FLOW_CONTROL_FILTER = 0x03
-
-            class _Lib:
-                def passThruOpen(self, _name):
-                    raise OSError(error)
-            mod.J2534 = _Lib
-            return mod
-
-        def _open_error() -> str:
-            try:
-                _uds_mod.J2534Transport().open()
-            except _uds_mod.TransportError as exc:
-                return str(exc)
-            return ""
-
-        saved_regs = _uds_mod.passthru_registrations
-        saved_pyj = sys.modules.get("pyj2534")
-        had_pyj = "pyj2534" in sys.modules
-        try:
-            # (b) Nothing registered in either registry view.
-            _uds_mod.passthru_registrations = lambda: []
-            sys.modules["pyj2534"] = _failing_pyj2534("STATUS_ERR_NO_DEVICE")
-            msg = _open_error()
-            checks.append(("preflight: nothing registered says so",
-                           "No J2534 PassThru device is registered" in msg))
-
-            # (c) Registrations only in the OTHER bitness view — the
-            # Openport-clone case: the message must name the bitness fix.
-            other = "32-bit" if _uds_mod.python_bitness() == 64 else "64-bit"
-            _uds_mod.passthru_registrations = lambda: [{
-                "view": other, "name": "Openport 2.0 clone",
-                "dll": r"C:\vendor\op20pt32.dll"}]
-            msg = _open_error()
-            checks.append(("preflight: wrong-bitness DLL names the fix",
-                           other in msg and "VWD_PYTHON" in msg
-                           and "Openport 2.0 clone" in msg))
-
-            # (d) Registered in our view but the open still fails — the
-            # underlying driver error must surface, not be swallowed.
-            ours = f"{_uds_mod.python_bitness()}-bit"
-            _uds_mod.passthru_registrations = lambda: [
-                {"view": ours, "name": "MongoosePro",
-                 "dll": r"C:\vendor\mongoose.dll"}]
-            sys.modules["pyj2534"] = _failing_pyj2534("ERR_DEVICE_NOT_CONNECTED")
-            msg = _open_error()
-            checks.append(("preflight: registered device surfaces driver error",
-                           "ERR_DEVICE_NOT_CONNECTED" in msg
-                           and "MongoosePro" in msg))
-
-            # (a) pyj2534 itself is not importable — None in sys.modules
-            # makes the import raise ImportError.
-            sys.modules["pyj2534"] = None
-            msg = _open_error()
-            checks.append(("preflight: missing pyj2534 names the package",
-                           "pyj2534" in msg and "pip install" in msg))
-        finally:
-            _uds_mod.passthru_registrations = saved_regs
-            if had_pyj:
-                sys.modules["pyj2534"] = saved_pyj
-            else:
-                sys.modules.pop("pyj2534", None)
+        # Preflight and failure-path regressions run in tests/test_transport.py
+        # with the bundled wrapper mocked, never the installed vendor driver.
     finally:
         globals()["emit"] = real_emit
 
@@ -1630,12 +1618,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="VW J2534 diagnostic monitor")
     parser.add_argument("--selftest", action="store_true",
                         help="run the event-stream smoke test on the test fixture")
+    parser.add_argument("--preflight", action="store_true",
+                        help="inspect registry/interpreter/DLL headers without loading the driver")
     parser.add_argument("--duration", type=float, default=None, help="stop after N seconds (testing)")
     parser.add_argument("--warmup-samples", type=int, default=60,
                         help="samples before learned baselines replace static thresholds (testing)")
     parser.add_argument("--stream-every", type=int, default=10,
                         help="emit a streaming analysis every N samples (testing)")
     args = parser.parse_args()
+
+    if args.preflight:
+        import uds
+        result = uds.preflight()
+        print(json.dumps(result), flush=True)
+        return 0 if result["ready"] else 2
 
     if args.selftest:
         return _selftest()

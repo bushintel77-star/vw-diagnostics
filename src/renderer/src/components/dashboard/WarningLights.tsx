@@ -261,11 +261,18 @@ const WarningLights = ({ codes, live }: WarningLightsProps) => {
               className={cn(
                 "flex w-[5.5rem] flex-col items-center gap-1 rounded-lg border p-2 transition-colors",
                 lamp.on ? SEVERITY_STYLES[lamp.severity] : "border-transparent text-muted-foreground/25",
-                lamp.on && lamp.blinking && "animate-lamp-blink"
+                lamp.on && lamp.blinking && "animate-lamp-blink motion-reduce:animate-none"
               )}
             >
               {lamp.icon}
-              <span className="text-center text-[9px] font-medium leading-tight">
+              {/* The lamp glyph dims when off, like a real cluster; its label
+                  stays readable (WCAG 1.4.3) in both states. */}
+              <span
+                className={cn(
+                  "text-center text-[10px] font-medium leading-tight",
+                  lamp.on ? "text-foreground" : "text-muted-foreground"
+                )}
+              >
                 {lamp.label}
               </span>
             </div>

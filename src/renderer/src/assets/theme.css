@@ -11,10 +11,15 @@
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
+    /* 40% (not shadcn's 46.1%) keeps secondary text at 4.5:1 or better on
+       tinted and muted surfaces too, not just on white. */
+    --muted-foreground: 240 3.8% 40%;
     --accent: 240 4.8% 95.9%;
     --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
+    /* Critical (#be123c): white-on-red badges and red text reach 4.5:1 at
+       small sizes, and it stays >= 15 dE from caution amber (dataviz
+       validate_palette.js, light surface). */
+    --destructive: 345 83% 41%;
     --destructive-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
@@ -25,6 +30,13 @@
     --chart-3: 197 37% 24%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
+    /* Instrument-panel system. SIGNAL = the one accent for live / working /
+       normal meters. Status colours are reserved for state and always ship
+       with an icon + word: OK = chart-2, CAUTION = warning, CRITICAL =
+       destructive (workshop-sign convention; never purple). */
+    --signal: 201 96% 32%; /* #0369a1 */
+    --warning: 41 92% 33%; /* #a16207 — 4.9:1 as text on white */
+    --warning-foreground: 0 0% 100%;
   }
 
   .dark {
@@ -42,8 +54,10 @@
     --muted-foreground: 240 5% 64.9%;
     --accent: 240 3.7% 15.9%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
+    /* Bright red reads on the dark background (red text, alarms); badges
+       and buttons on it use near-black text for 4.5:1. */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 240 10% 4%;
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
@@ -52,5 +66,8 @@
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+    --signal: 198 93% 60%; /* #38bdf8 — neon on the race surface */
+    --warning: 41 96% 54%; /* #fab219 */
+    --warning-foreground: 240 10% 4%;
   }
 }

@@ -1,6 +1,9 @@
 import {
   CheckForUpdateFn,
+  GetCableSetupStatusFn,
   GetVersionsFn,
+  InstallDriverFn,
+  UnlockDriverFn,
   OpenUpdateDownloadFn,
   SendDiagnosticCommandFn,
   StartDiagnosticFn,
@@ -20,6 +23,9 @@ declare global {
       onDiagnosticEvent: OnDiagnosticEventFn;
       checkForUpdate: CheckForUpdateFn;
       openUpdateDownload: OpenUpdateDownloadFn;
+      getCableSetupStatus: GetCableSetupStatusFn;
+      unlockDriver: UnlockDriverFn;
+      installDriver: InstallDriverFn;
     };
   }
 }

@@ -122,7 +122,7 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Zap className="size-4 text-chart-1" />
+          <Zap className="size-4 text-signal" />
           Performance Mods
           {active.size > 0 && (
             <Badge variant="secondary">{active.size} applied</Badge>
@@ -134,7 +134,7 @@ const ModsPanel = ({ mods, running, onApply, onRevert }: ModsPanelProps) => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <p className="rounded-md border border-chart-4/40 bg-chart-4/10 px-3 py-2 text-xs leading-snug text-muted-foreground">
+        <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-snug text-muted-foreground">
           Mods are applied by bench flashing the ECU (boot mode) — this app
           plans the change and verifies it afterwards; it does not write to
           the ECU. Apply controls are disabled.

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "cipher": "aes-256-gcm",
+  "kdf": "scrypt",
+  "N": 131072,
+  "r": 8,
+  "p": 1,
+  "salt": "3ab11416307da7492f5a06bb41bb9d2c",
+  "iv": "b103840e41a28e3acb9e4972",
+  "tag": "4bac2a621990c263750bd9cf25ecd527",
+  "sha256": "0516379fae4a1d68b0523ec5757539ff0d67312457868b4fb4fb6867c8aec1c0",
+  "size": 4111912
+}
