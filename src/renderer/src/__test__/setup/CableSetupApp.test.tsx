@@ -67,6 +67,21 @@ describe("cable setup on the dashboard", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  test("a newer Tactrix driver blocks Start Session and explains why", async () => {
+    statusMock().mockResolvedValue({
+      ...READY_MACHINE,
+      cable: "ready",
+      driverVersion: "1.02.0.4820",
+      driverVersionState: "newer",
+    });
+    await renderApp();
+    expect(await screen.findByRole("heading", { name: "A newer Tactrix driver is on this PC" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Start Session/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Driver too new\. Open cable setup/ })).toBeVisible();
+    // No way forward from the wizard either.
+    expect(screen.queryByRole("button", { name: "Start session" })).toBeNull();
+  });
+
   test("the browser demo hides cable setup entirely", async () => {
     statusMock().mockResolvedValue({ ...READY_MACHINE, platformSupported: false, cable: "unknown" });
     await renderApp();

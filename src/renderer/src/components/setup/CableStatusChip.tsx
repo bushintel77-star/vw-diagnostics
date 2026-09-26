@@ -19,9 +19,11 @@ export default function CableStatusChip({
   if (!status?.platformSupported) return null;
 
   const tone = attentionKey(status)
-    ? status.driverInstalled
-      ? { label: "Cable needs attention", dot: "bg-destructive", ring: "border-destructive/50" }
-      : { label: "Driver needed", dot: "bg-chart-4", ring: "border-chart-4/50" }
+    ? !status.driverInstalled
+      ? { label: "Driver needed", dot: "bg-chart-4", ring: "border-chart-4/50" }
+      : status.driverVersionState === "newer"
+        ? { label: "Driver too new", dot: "bg-destructive", ring: "border-destructive/50" }
+        : { label: "Cable needs attention", dot: "bg-destructive", ring: "border-destructive/50" }
     : status.cable === "ready"
       ? { label: "Cable ready", dot: "bg-chart-2", ring: "border-chart-2/50" }
       : { label: "Cable not plugged in", dot: "bg-muted-foreground/60", ring: "border-border" };

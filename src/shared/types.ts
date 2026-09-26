@@ -456,12 +456,20 @@ export interface CablePreflight {
   python: string | null;
 }
 
+/** The installed Tactrix J2534 DLL against the one safe version (1.01.0.4341).
+ *  "newer" is the dangerous case: newer Tactrix software can update a clone
+ *  cable's firmware and brick it, so sessions are refused. */
+export type DriverVersionState = "match" | "newer" | "older" | "unknown";
+
 export interface CableSetupStatus {
   platformSupported: boolean;
   /** Windows build number; 22000 and above is Windows 11. */
   windowsBuild: number | null;
   /** A Tactrix J2534 04.04 registration exists in either registry view. */
   driverInstalled: boolean;
+  /** File version of the registered Tactrix J2534 DLL, when readable. */
+  driverVersion: string | null;
+  driverVersionState: DriverVersionState;
   /** This (private) build carries the pinned installer + passkey hash. */
   driverBundled: boolean;
   cable: CableState;

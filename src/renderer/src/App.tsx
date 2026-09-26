@@ -243,6 +243,11 @@ const App = () => {
 
   // Plug-and-play cable setup: polls while idle, opens itself on problems.
   const cableSetup = useCableSetup({ sessionActive: running });
+  // A newer Tactrix driver can reflash (brick) a clone: no session until the
+  // safe version is back. The main process enforces this too.
+  const driverTooNew =
+    cableSetup.status?.driverInstalled === true &&
+    cableSetup.status.driverVersionState === "newer";
 
   const stale =
     running &&
@@ -438,7 +443,11 @@ const App = () => {
             </Badge>
           )}
           <StatusBadge status={status} />
-          <Button onClick={handleStart} disabled={running || busy}>
+          <Button
+            onClick={handleStart}
+            disabled={running || busy || driverTooNew}
+            title={driverTooNew ? "Blocked: a newer Tactrix driver could brick the cable. Open Cable setup." : undefined}
+          >
             <Play className="fill-current" />
             Start Session
           </Button>

@@ -23,6 +23,8 @@ const browserCableStatus = (): Promise<CableSetupStatus> =>
     platformSupported: false,
     windowsBuild: null,
     driverInstalled: false,
+    driverVersion: null,
+    driverVersionState: "unknown",
     driverBundled: false,
     cable: "unknown",
     cableProblemCode: null,

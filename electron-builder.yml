@@ -12,13 +12,20 @@ files:
   # Test-only transport fixture (fake VIN/DTCs for CI selftest) — must never
   # ship inside the packaged app.
   - '!resources/sim_fixture.py'
-  # Passkey-gated driver bundle (Tactrix's installer) — private builds only,
-  # via electron-builder.private.yml. Never in a public release.
+  # The locked driver ships beside the asar (extraResources below), never in it.
   - '!resources/driver/**'
   - '!tests/**'
   - '!scripts/**'
 asarUnpack:
   - resources/**
+# The OpenPort driver, AES-256-GCM encrypted with the build-time passkey
+# (npm run driver:encrypt). Only ciphertext ships; never the plain installer.
+extraResources:
+  - from: resources/driver
+    to: driver
+    filter:
+      - openport-driver.enc
+      - openport-driver.json
 win:
   executableName: vw-diagnostics
   icon: build/icon.ico

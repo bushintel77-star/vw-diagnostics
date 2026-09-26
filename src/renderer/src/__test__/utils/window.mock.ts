@@ -5,6 +5,8 @@ export const READY_MACHINE: CableSetupStatus = {
   platformSupported: true,
   windowsBuild: 19045,
   driverInstalled: true,
+  driverVersion: "1.01.0.4341",
+  driverVersionState: "match",
   driverBundled: false,
   cable: "absent",
   cableProblemCode: null,

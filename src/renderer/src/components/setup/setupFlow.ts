@@ -32,6 +32,7 @@ export interface CheckItem {
 export interface Blocker {
   kind:
     | "unsupported"
+    | "driver_too_new"
     | "windows_block"
     | "driver_failed"
     | "device_problem"
@@ -45,9 +46,12 @@ export interface Blocker {
 export const isWindows11 = (build: number | null): boolean =>
   build !== null && build >= 22000;
 
+const driverTooNew = (status: CableSetupStatus): boolean =>
+  status.driverInstalled && status.driverVersionState === "newer";
+
 export function currentStep(status: CableSetupStatus | null): StepId {
   if (!status || !status.platformSupported) return "check";
-  if (!status.driverInstalled || status.cable === "no_driver") return "driver";
+  if (!status.driverInstalled || status.cable === "no_driver" || driverTooNew(status)) return "driver";
   if (status.cable !== "ready") return "plug";
   return "ready";
 }
@@ -60,6 +64,22 @@ export function findBlocker(status: CableSetupStatus | null): Blocker | null {
       title: "Cable setup runs in the Windows app",
       body: "Open VW Diagnostics on the Windows computer your cable plugs into.",
       steps: [],
+    };
+  }
+  // Outranks everything else: the cable itself is at risk.
+  if (driverTooNew(status)) {
+    return {
+      kind: "driver_too_new",
+      title: "A newer Tactrix driver is on this PC",
+      body:
+        `This PC has OpenPort driver ${status.driverVersion}. Newer Tactrix software can update your cable's ` +
+        "firmware and permanently break a clone cable, so sessions are blocked until the safe version is back.",
+      steps: [
+        "Unplug the cable and leave it unplugged.",
+        "In Windows Settings, open Apps and uninstall OpenPort 2.0 J2534 Drivers (and EcuFlash, if it's there).",
+        "Come back here and install version 1.01.4341. This screen updates by itself.",
+      ],
+      caution: "Don't open any Tactrix program with the cable plugged in, and never accept a firmware update.",
     };
   }
   const code = status.cableProblemCode;
@@ -129,7 +149,13 @@ export function findBlocker(status: CableSetupStatus | null): Blocker | null {
 
 /** Which step the blocker belongs to, so the stepper can mark it. */
 const blockerStep = (blocker: Blocker): StepId =>
-  blocker.kind === "unsupported" ? "check" : blocker.kind === "python" ? "ready" : "plug";
+  blocker.kind === "unsupported"
+    ? "check"
+    : blocker.kind === "driver_too_new"
+      ? "driver"
+      : blocker.kind === "python"
+        ? "ready"
+        : "plug";
 
 export function stepStates(status: CableSetupStatus | null): Record<StepId, StepState> {
   const current = currentStep(status);
@@ -166,9 +192,16 @@ export function deriveChecks(status: CableSetupStatus | null): CheckItem[] {
       ? { id: "windows", label: "Windows", state: "warn", detail: `${windowsName}. Older cable drivers can be blocked` }
       : { id: "windows", label: "Windows", state: "pass", detail: windowsName };
 
-  const driver: CheckItem = status.driverInstalled
-    ? { id: "driver", label: "Cable driver", state: "pass", detail: "OpenPort J2534 driver installed" }
-    : { id: "driver", label: "Cable driver", state: "fail", detail: "Not installed yet" };
+  const version = status.driverVersion;
+  const driver: CheckItem = !status.driverInstalled
+    ? { id: "driver", label: "Cable driver", state: "fail", detail: "Not installed yet" }
+    : status.driverVersionState === "match"
+      ? { id: "driver", label: "Cable driver", state: "pass", detail: `Version ${version}, the safe one` }
+      : status.driverVersionState === "newer"
+        ? { id: "driver", label: "Cable driver", state: "fail", detail: `Version ${version} is too new for this cable` }
+        : status.driverVersionState === "older"
+          ? { id: "driver", label: "Cable driver", state: "warn", detail: `Version ${version}, older than 1.01.4341` }
+          : { id: "driver", label: "Cable driver", state: "warn", detail: "Installed, but its version couldn't be read" };
 
   const cableDetail: Record<CableSetupStatus["cable"], [CheckState, string]> = {
     absent: ["waiting", "Not plugged in"],
@@ -201,6 +234,7 @@ export function deriveChecks(status: CableSetupStatus | null): CheckItem[] {
 export function attentionKey(status: CableSetupStatus | null): string | null {
   if (!status || !status.platformSupported) return null;
   if (!status.driverInstalled) return "driver-missing";
+  if (driverTooNew(status)) return `driver-too-new-${status.driverVersion}`;
   if (["blocked", "no_driver", "problem"].includes(status.cable)) {
     return `cable-${status.cable}-${status.cableProblemCode ?? ""}`;
   }

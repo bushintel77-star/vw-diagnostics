@@ -49,10 +49,10 @@ Rules of thumb:
 Keep the driver confirmed for your clone. For the reported setup,
 `openport2_setup_1004341.exe` has installed `op20pt32.dll` version
 `1.01.0.4341`. Do not replace it with a newer Tactrix/EcuFlash package or
-run firmware updaters. Public builds of this app never install drivers; a
-private build can launch only that pinned installer, behind a passkey (see
-[Cable setup wizard](#cable-setup-wizard)). The app never requests adapter
-firmware updates; vendor DLL behaviour remains vendor-controlled.
+run firmware updaters. The app carries only that pinned installer, locked
+with a passkey, and refuses to start a session when a newer Tactrix driver
+is installed (see [Cable setup wizard](#cable-setup-wizard)). The app never
+requests adapter firmware updates; vendor DLL behaviour remains vendor-controlled.
 
 The Python J2534 wrapper is included. **Do not run `pip install pyj2534`.**
 The interpreter must match the DLL architecture. A 32-bit driver requires
@@ -136,20 +136,29 @@ status, so plugging the cable in or finishing the installer moves it on
 without a click. On Windows 11 with Code 39 it explains the block and points
 to the Windows 10 options above. It never offers to change security settings.
 
-**Private build with the driver bundled.** Tactrix's installer is never
-committed or shipped in public releases (`resources/driver/` is gitignored
-and excluded by `electron-builder.yml`). For your own machines only:
+**Update blocker.** Every check reads the registered Tactrix DLL's file
+version. Anything newer than `1.01.0.4341` (for example after installing
+EcuFlash) is treated as a danger to a clone cable's firmware: the wizard
+blocks with uninstall-and-reinstall steps, and Start Session is refused. The
+main process enforces this too, not just the UI.
+
+**Driver locked inside the app.** The installer ships in every build,
+including the website download, but only as AES-256-GCM ciphertext. The key
+comes from a passkey (scrypt, N=2^17), so without the passkey the download
+holds no usable driver. To lock it, or to change the passkey:
 
 ```powershell
-npm run driver:passkey          # verifies the pinned SHA-256, copies the installer, asks for a passkey (hidden)
-npm run release:win:private     # re-checks the bundle, builds dist-private/vw-diagnostics-private-setup.exe
+npm run driver:encrypt          # verifies the pinned SHA-256, asks for a passkey (hidden, 10+ characters)
 ```
 
-Only the scrypt hash of the passkey is stored. In the wizard, the passkey
-unlocks the install for 10 minutes. Five wrong entries lock it for a minute.
-The installer's hash is checked again right before it runs through the
-Windows (UAC) prompt. The passkey is a convenience gate, not encryption:
-anyone holding the private build has the installer, so never publish it.
+That writes `resources/driver/openport-driver.enc` and `.json`. Commit both;
+they are safe to publish. The plain `.exe` is gitignored and never packaged,
+and `release:win` refuses to build without the locked driver. The ciphertext
+is public, so the passkey's length is the real protection: use a phrase. In
+the wizard, a correct passkey decrypts the installer in memory for 10
+minutes (five wrong entries lock it for a minute). Install writes it to a
+fresh temp folder, re-checks its SHA-256, runs it through the Windows (UAC)
+prompt and deletes it.
 
 ## 3. First-connect checklist (in order)
 

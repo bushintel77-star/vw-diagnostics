@@ -1,46 +1,49 @@
-// Prepares the passkey-gated driver bundle for a PRIVATE build.
+// Locks the OpenPort driver into the app with a passkey.
 //
-//   node scripts/set-driver-passkey.mjs [path-to-openport2_setup_1004341.exe]
-//   node scripts/set-driver-passkey.mjs --check
+//   npm run driver:encrypt [-- path\to\openport2_setup_1004341.exe]
+//   node scripts/encrypt-driver.mjs --check
 //
-// Copies the pinned OpenPort installer into resources/driver/ (gitignored)
-// after verifying its SHA-256, then asks for a passkey (hidden input) and
-// stores only its scrypt hash in resources/driver/passkey.json. The passkey
-// itself is never written anywhere. `--check` verifies an existing bundle
-// and is run by `npm run release:win:private` before packaging.
-//
-// Never publish a private build: it carries Tactrix's installer.
+// Verifies the installer against the pinned SHA-256, asks for a passkey
+// (hidden, typed twice) and writes resources/driver/openport-driver.enc +
+// openport-driver.json. Only ciphertext is written; the plain installer and
+// the passkey never land in the repo. Every build — including the public
+// installer on the website — then carries the locked driver. `--check`
+// guards release:win so a website release never ships without it.
 
-import { createHash, randomBytes, scryptSync } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DRIVER_FILE, DRIVER_SHA256, PASSKEY_FILE, SCRYPT, scryptMaxmem } from './driver-bundle.mjs';
+import {
+  DRIVER_FILE,
+  DRIVER_SHA256,
+  ENCRYPTED_FILE,
+  META_FILE,
+  MIN_PASSKEY_LENGTH,
+  encryptDriver,
+  isValidMeta,
+  sha256,
+} from './driver-bundle.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const bundleDir = path.join(root, 'resources', 'driver');
-const MIN_LENGTH = 6;
-
-const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
 
 const fail = (message) => {
-  console.error(`set-driver-passkey: ${message}`);
+  console.error(`encrypt-driver: ${message}`);
   process.exit(1);
 };
 
 function check() {
-  const installer = path.join(bundleDir, DRIVER_FILE);
-  const record = path.join(bundleDir, PASSKEY_FILE);
-  if (!existsSync(installer)) fail(`missing ${installer} — run: node scripts/set-driver-passkey.mjs`);
-  if (sha256(installer) !== DRIVER_SHA256) fail(`${DRIVER_FILE} does not match the pinned SHA-256 — refusing to package it.`);
+  const blob = path.join(bundleDir, ENCRYPTED_FILE);
+  let meta;
   try {
-    const { salt, hash, N, r, p } = JSON.parse(readFileSync(record, 'utf8'));
-    if (typeof salt !== 'string' || typeof hash !== 'string' || ![N, r, p].every(Number.isInteger)) throw new Error('bad record');
+    meta = JSON.parse(readFileSync(path.join(bundleDir, META_FILE), 'utf8'));
   } catch {
-    fail(`missing or invalid ${record} — run: node scripts/set-driver-passkey.mjs`);
+    fail(`missing ${META_FILE} — run: npm run driver:encrypt`);
   }
-  console.log('set-driver-passkey: driver bundle OK (pinned installer + passkey hash).');
+  if (!isValidMeta(meta) || !existsSync(blob)) fail('locked driver is missing or invalid — run: npm run driver:encrypt');
+  if (readFileSync(blob).length !== meta.size) fail(`${ENCRYPTED_FILE} does not match its metadata — run: npm run driver:encrypt`);
+  console.log('encrypt-driver: locked driver present (pinned 1.01.4341, AES-256-GCM).');
 }
 
 /** Reads a line without echoing it. Needs an interactive terminal. */
@@ -82,30 +85,25 @@ async function main() {
 
   const source = path.resolve(args[0] || path.join(homedir(), 'Downloads', DRIVER_FILE));
   if (!existsSync(source)) fail(`installer not found: ${source}`);
-  if (sha256(source) !== DRIVER_SHA256) {
+  const plain = readFileSync(source);
+  if (sha256(plain) !== DRIVER_SHA256) {
     fail(`${source} is not the pinned ${DRIVER_FILE} (SHA-256 mismatch). ` +
       'Only that exact version is allowed — never a newer Tactrix/EcuFlash package.');
   }
 
-  console.log(`Verified ${DRIVER_FILE} (pinned SHA-256).`);
-  console.log(`Choose the passkey that unlocks the driver install in the app (at least ${MIN_LENGTH} characters; typing is hidden).`);
+  console.log(`Verified ${DRIVER_FILE} (version 1.01.4341).`);
+  console.log(`Choose the passkey people type in the app to install the driver.`);
+  console.log(`At least ${MIN_PASSKEY_LENGTH} characters — a short phrase is easiest (typing is hidden).`);
   const passkey = await askHidden('Passkey: ');
-  if (passkey.length < MIN_LENGTH) fail(`passkey must be at least ${MIN_LENGTH} characters.`);
-  if ((await askHidden('Repeat passkey: ')) !== passkey) fail('the two entries did not match — nothing was changed.');
+  if (passkey.length < MIN_PASSKEY_LENGTH) fail(`passkey must be at least ${MIN_PASSKEY_LENGTH} characters — nothing was changed.`);
+  if ((await askHidden('Type it again: ')) !== passkey) fail('the two entries did not match — nothing was changed.');
 
-  const salt = randomBytes(16);
-  const hash = scryptSync(passkey, salt, SCRYPT.keyLength, {
-    N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p, maxmem: scryptMaxmem(SCRYPT.N, SCRYPT.r),
-  });
-
+  console.log('Locking the driver…');
+  const { meta, ciphertext } = encryptDriver(plain, passkey);
   mkdirSync(bundleDir, { recursive: true });
-  copyFileSync(source, path.join(bundleDir, DRIVER_FILE));
-  writeFileSync(
-    path.join(bundleDir, PASSKEY_FILE),
-    JSON.stringify({ version: 1, salt: salt.toString('hex'), hash: hash.toString('hex'), N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p }, null, 2) + '\n'
-  );
-  console.log(`Driver bundle ready in ${path.relative(root, bundleDir)} (gitignored).`);
-  console.log('Build the private installer with: npm run release:win:private');
+  writeFileSync(path.join(bundleDir, ENCRYPTED_FILE), ciphertext);
+  writeFileSync(path.join(bundleDir, META_FILE), JSON.stringify(meta, null, 2) + '\n');
+  console.log(`Done: ${path.relative(root, bundleDir)}${path.sep}${ENCRYPTED_FILE} (locked; safe to commit and publish).`);
 }
 
 await main();

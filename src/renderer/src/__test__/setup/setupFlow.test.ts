@@ -12,6 +12,8 @@ const base: CableSetupStatus = {
   platformSupported: true,
   windowsBuild: 19045,
   driverInstalled: true,
+  driverVersion: "1.01.0.4341",
+  driverVersionState: "match",
   driverBundled: false,
   cable: "absent",
   cableProblemCode: null,
@@ -36,6 +38,40 @@ describe("the step always follows live status", () => {
     ["cable ready", status({ cable: "ready" }), "ready"],
   ] as const)("%s", (_, input, expected) => {
     expect(currentStep(input)).toBe(expected);
+  });
+});
+
+describe("newer-driver blocker (protects the cable's firmware)", () => {
+  const tooNew = status({ driverVersion: "1.02.0.4820", driverVersionState: "newer", cable: "ready" });
+
+  test("outranks everything, even a working cable", () => {
+    const blocker = findBlocker(tooNew);
+    expect(blocker?.kind).toBe("driver_too_new");
+    expect(blocker?.body).toMatch(/1\.02\.0\.4820/);
+    expect(blocker?.steps.join(" ")).toMatch(/Unplug the cable/);
+    expect(blocker?.caution).toMatch(/never accept a firmware update/);
+    expect(currentStep(tooNew)).toBe("driver");
+    expect(stepStates(tooNew).driver).toBe("blocked");
+  });
+
+  test("opens the wizard by itself and fails the driver check", () => {
+    expect(attentionKey(tooNew)).toBe("driver-too-new-1.02.0.4820");
+    expect(deriveChecks(tooNew).find((c) => c.id === "driver")).toMatchObject({
+      state: "fail",
+      detail: "Version 1.02.0.4820 is too new for this cable",
+    });
+  });
+
+  test("the safe version passes and says so", () => {
+    expect(deriveChecks(status({})).find((c) => c.id === "driver")).toMatchObject({
+      state: "pass",
+      detail: "Version 1.01.0.4341, the safe one",
+    });
+  });
+
+  test("an older or unreadable version warns but doesn't block", () => {
+    expect(findBlocker(status({ driverVersion: "1.0.0.4227", driverVersionState: "older" }))).toBeNull();
+    expect(deriveChecks(status({ driverVersion: null, driverVersionState: "unknown" })).find((c) => c.id === "driver")?.state).toBe("warn");
   });
 });
 

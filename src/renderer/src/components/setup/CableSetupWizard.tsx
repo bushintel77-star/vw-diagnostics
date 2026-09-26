@@ -619,7 +619,7 @@ function PasskeyForm({
         </button>
       </div>
       <p id="passkey-help" className="text-xs text-muted-foreground">
-        Unlocks the bundled OpenPort driver (version 1.01.4341). Windows asks for permission next.
+        Unlocks the OpenPort driver that comes locked inside this app (version 1.01.4341). Windows asks for permission next.
       </p>
       {capsLock && (
         <p id="passkey-caps" className="text-xs text-chart-4">
@@ -647,8 +647,9 @@ function TechnicalDetails({ status }: { status: CableSetupStatus | null }): Reac
   const rows: [string, string][] = [
     ["Windows build", status.windowsBuild ? String(status.windowsBuild) : "n/a"],
     ["J2534 driver registered", status.driverInstalled ? "yes" : "no"],
+    ["Driver version", status.driverVersion ? `${status.driverVersion} (${status.driverVersionState})` : "n/a"],
     ["Cable state", status.cable + (status.cableProblemCode ? ` (Code ${status.cableProblemCode})` : "")],
-    ["Driver bundled in this build", status.driverBundled ? "yes" : "no"],
+    ["Locked driver in this app", status.driverBundled ? "yes" : "no"],
     ["Python", status.preflight ? `${status.preflight.bitness ?? "?"}-bit ${status.preflight.python ?? ""}`.trim() : "not checked"],
     ["Last checked", new Date(status.checkedAt).toLocaleTimeString()],
   ];

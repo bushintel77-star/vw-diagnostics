@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, IpcMainInvokeEvent } from "electron
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import icon from "../../resources/icon.png?asset";
-import { getVersions, triggerIPC, startDiagnostic, stopDiagnostic, sendDiagnosticCommand, checkForUpdate, openUpdateDownload, getCableSetupStatus, unlockDriver, installDriver } from "@/lib";
+import { getVersions, triggerIPC, startDiagnostic, stopDiagnostic, sendDiagnosticCommand, checkForUpdate, openUpdateDownload, getCableSetupStatus, unlockDriver, installDriver, sessionBlockReason } from "@/lib";
 import { GetVersionsFn } from "@shared/types";
 
 // Only the app's own page may drive the monitor: a dropped file or foreign
@@ -88,9 +88,13 @@ app.whenReady().then(() => {
 
   ipcMain.handle("triggerIPC", () => triggerIPC());
 
-  ipcMain.handle("diagnostic:start", (event) =>
-    isTrustedSender(event) ? startDiagnostic(event.sender) : untrusted
-  );
+  ipcMain.handle("diagnostic:start", async (event) => {
+    if (!isTrustedSender(event)) return untrusted;
+    // Never open the cable through a newer Tactrix DLL: it can reflash
+    // (and brick) a clone. Checked here, not only in the UI.
+    const blocked = await sessionBlockReason();
+    return blocked ? { started: false, message: blocked } : startDiagnostic(event.sender);
+  });
 
   ipcMain.handle("diagnostic:stop", (event) =>
     isTrustedSender(event) ? stopDiagnostic() : untrusted

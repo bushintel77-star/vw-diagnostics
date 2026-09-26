@@ -137,6 +137,5 @@ __pycache__/
 .mimosa/
 .zcode/
 
-# Private driver bundle (Tactrix installer + passkey hash) and private builds
-resources/driver/
-dist-private/
+# The driver is committed only encrypted; a plain installer must never be
+resources/driver/*.exe

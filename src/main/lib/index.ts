@@ -15,7 +15,7 @@ export {
 
 export { checkForUpdate, openUpdateDownload } from "./update";
 
-export { installDriver, unlockDriver } from "./cableSetup";
+export { installDriver, unlockDriver, sessionBlockReason } from "./cableSetup";
 
 // A full check adds the monitor's read-only Python <-> driver preflight.
 export const getCableSetupStatus = (options: { full?: boolean }) =>
