@@ -11,6 +11,7 @@ void udsModule;
 void j2534Module;
 import {
   BaselineStateFile,
+  CablePreflight,
   DiagnosticCommand,
   DiagnosticCommandResult,
   DiagnosticEvent,
@@ -138,4 +139,16 @@ export async function stopDiagnostic(): Promise<DiagnosticSessionResult> {
 
 export async function sendDiagnosticCommand(command: DiagnosticCommand): Promise<DiagnosticCommandResult> {
   return host ? host.send(command) : { ok: false, message: "No diagnostic session is running." };
+}
+
+/** The monitor's read-only preflight for the setup wizard. Its own host, so
+ *  a running session is never disturbed; no device is opened. */
+export async function runPythonPreflight(): Promise<CablePreflight> {
+  const result = await new MonitorProcess(monitorScript, () => {}).preflight();
+  return {
+    ready: result.ready,
+    message: result.message ?? "",
+    bitness: result.bitness ?? null,
+    python: result.python ?? null,
+  };
 }

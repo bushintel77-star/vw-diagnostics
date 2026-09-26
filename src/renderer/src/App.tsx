@@ -29,6 +29,9 @@ import UpdateGate from "@/components/dashboard/UpdateGate";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
 import WorkflowGuide from "@/components/dashboard/WorkflowGuide";
+import CableSetupWizard from "@/components/setup/CableSetupWizard";
+import CableStatusChip from "@/components/setup/CableStatusChip";
+import { useCableSetup } from "@/components/setup/useCableSetup";
 import { isBrowserLive } from "@/web/liveBridge";
 import {
   DiagnosticAnalysisEvent,
@@ -238,6 +241,9 @@ const App = () => {
   const running =
     busy || (status !== null && ACTIVE_PHASES.includes(status.phase));
 
+  // Plug-and-play cable setup: polls while idle, opens itself on problems.
+  const cableSetup = useCableSetup({ sessionActive: running });
+
   const stale =
     running &&
     !busy &&
@@ -393,6 +399,15 @@ const App = () => {
       <UpdateBanner />
       {/* draggable getting-started sticky — persisted open/closed + position */}
       <WorkflowGuide />
+      {/* guided cable setup — self-checks, passkey-gated driver, live detection */}
+      <CableSetupWizard
+        controller={cableSetup}
+        sessionActive={running}
+        onStartSession={() => {
+          cableSetup.closeWizard();
+          void handleStart();
+        }}
+      />
 
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
@@ -412,6 +427,11 @@ const App = () => {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <CableStatusChip
+            status={cableSetup.status}
+            justConnected={cableSetup.justConnected}
+            onOpen={cableSetup.openWizard}
+          />
           {isBrowserLive() && (
             <Badge variant="outline" className="border-chart-2/50 text-chart-2">
               Live Python monitor
@@ -458,11 +478,23 @@ const App = () => {
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <Cable className="size-5 shrink-0 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              No interface connected — attach a J2534 pass-thru device,
-              use its existing compatible driver and a matching Python interpreter,
-              then Start Session to connect to the vehicle. The Python wrapper is included.
-            </p>
+            {cableSetup.status?.cable === "ready" ? (
+              <p className="flex-1 text-sm text-muted-foreground">
+                Cable ready — plug it into the truck's OBD port, turn the
+                ignition on, then Start Session.
+              </p>
+            ) : (
+              <p className="flex-1 text-sm text-muted-foreground">
+                No interface connected — attach a J2534 pass-thru device,
+                use its existing compatible driver and a matching Python interpreter,
+                then Start Session to connect to the vehicle. The Python wrapper is included.
+              </p>
+            )}
+            {cableSetup.status?.platformSupported && cableSetup.status.cable !== "ready" && (
+              <Button variant="outline" size="sm" className="shrink-0 rounded-full" onClick={cableSetup.openWizard}>
+                Set up cable
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}

@@ -78,18 +78,29 @@ export class MonitorProcess {
     });
   }
 
-  async launch(generation) {
+  /** Read-only interpreter/driver check across the candidates; opens no
+   *  device. First ready setup wins (with its candidate); otherwise the
+   *  joined errors. A stop during the search abandons it. */
+  async preflight(generation = this.generation) {
     const errors = [];
     for (const candidate of pythonCandidates(this.env, this.platform)) {
       const setup = await this.inspect(candidate, generation);
-      if (generation !== this.generation) return { started: false, message: 'Session stopped.' };
-      if (!setup.ready) { errors.push(setup.message); continue; }
-      this.onEvent({ type: 'log', message: `J2534 preflight: ${setup.bitness}-bit Python ${setup.python}; existing DLL ${setup.dll}` });
-      return this.connect(candidate, generation);
+      if (generation !== this.generation) return { ready: false, stopped: true, message: 'Session stopped.' };
+      if (setup.ready) return { ...setup, candidate };
+      errors.push(setup.message);
     }
-    const message = errors.join('\n');
-    this.onEvent({ type: 'status', phase: 'error', mode: 'live', message });
-    return { started: false, message };
+    return { ready: false, message: errors.join('\n') };
+  }
+
+  async launch(generation) {
+    const setup = await this.preflight(generation);
+    if (setup.stopped) return { started: false, message: setup.message };
+    if (!setup.ready) {
+      this.onEvent({ type: 'status', phase: 'error', mode: 'live', message: setup.message });
+      return { started: false, message: setup.message };
+    }
+    this.onEvent({ type: 'log', message: `J2534 preflight: ${setup.bitness}-bit Python ${setup.python}; existing DLL ${setup.dll}` });
+    return this.connect(setup.candidate, generation);
   }
 
   connect(candidate, generation) {

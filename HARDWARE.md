@@ -49,8 +49,10 @@ Rules of thumb:
 Keep the driver confirmed for your clone. For the reported setup,
 `openport2_setup_1004341.exe` has installed `op20pt32.dll` version
 `1.01.0.4341`. Do not replace it with a newer Tactrix/EcuFlash package or
-run firmware updaters. This app never installs drivers or explicitly
-requests adapter firmware updates; vendor DLL behaviour remains vendor-controlled.
+run firmware updaters. Public builds of this app never install drivers; a
+private build can launch only that pinned installer, behind a passkey (see
+[Cable setup wizard](#cable-setup-wizard)). The app never requests adapter
+firmware updates; vendor DLL behaviour remains vendor-controlled.
 
 The Python J2534 wrapper is included. **Do not run `pip install pyj2534`.**
 The interpreter must match the DLL architecture. A 32-bit driver requires
@@ -122,6 +124,32 @@ The "Microsoft Vulnerable Driver Blocklist" switch under Windows Security >
 Device security > Core isolation is a different list and does not lift
 this block. Sources: [The Windows Driver Policy](https://support.microsoft.com/en-us/windows/hardware/drivers/the-windows-driver-policy),
 [Removing trust for the cross-signed driver program](https://techcommunity.microsoft.com/blog/windows-itpro-blog/advancing-windows-driver-security-removing-trust-for-the-cross-signed-driver-pro/4504818).
+
+### Cable setup wizard
+
+The cable chip in the dashboard header opens **Cable setup**. It also opens by
+itself when something needs fixing: no driver, or Code 28/39/other. It runs
+the same read-only checks as this section: Windows build, the J2534
+registration, the cable's Device Manager state (present devices only, polled
+every few seconds), and the `--preflight` Python check. The step follows live
+status, so plugging the cable in or finishing the installer moves it on
+without a click. On Windows 11 with Code 39 it explains the block and points
+to the Windows 10 options above. It never offers to change security settings.
+
+**Private build with the driver bundled.** Tactrix's installer is never
+committed or shipped in public releases (`resources/driver/` is gitignored
+and excluded by `electron-builder.yml`). For your own machines only:
+
+```powershell
+npm run driver:passkey          # verifies the pinned SHA-256, copies the installer, asks for a passkey (hidden)
+npm run release:win:private     # re-checks the bundle, builds dist-private/vw-diagnostics-private-setup.exe
+```
+
+Only the scrypt hash of the passkey is stored. In the wizard, the passkey
+unlocks the install for 10 minutes. Five wrong entries lock it for a minute.
+The installer's hash is checked again right before it runs through the
+Windows (UAC) prompt. The passkey is a convenience gate, not encryption:
+anyone holding the private build has the installer, so never publish it.
 
 ## 3. First-connect checklist (in order)
 

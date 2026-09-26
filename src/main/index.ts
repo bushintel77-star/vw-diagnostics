@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, IpcMainInvokeEvent } from "electron
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import icon from "../../resources/icon.png?asset";
-import { getVersions, triggerIPC, startDiagnostic, stopDiagnostic, sendDiagnosticCommand, checkForUpdate, openUpdateDownload } from "@/lib";
+import { getVersions, triggerIPC, startDiagnostic, stopDiagnostic, sendDiagnosticCommand, checkForUpdate, openUpdateDownload, getCableSetupStatus, unlockDriver, installDriver } from "@/lib";
 import { GetVersionsFn } from "@shared/types";
 
 // Only the app's own page may drive the monitor: a dropped file or foreign
@@ -104,6 +104,24 @@ app.whenReady().then(() => {
 
   ipcMain.handle("update:openDownload", (event) =>
     isTrustedSender(event) ? openUpdateDownload() : untrusted
+  );
+
+  // Setup probes spawn system tools, and install elevates: app window only.
+  ipcMain.handle("cable:status", (event, options) => {
+    if (!isTrustedSender(event)) throw new Error(untrusted.message);
+    return getCableSetupStatus({ full: options?.full === true });
+  });
+
+  ipcMain.handle("cable:unlockDriver", (event, passkey) =>
+    isTrustedSender(event)
+      ? unlockDriver(passkey)
+      : { ok: false, reason: "unavailable", message: untrusted.message }
+  );
+
+  ipcMain.handle("cable:installDriver", (event) =>
+    isTrustedSender(event)
+      ? installDriver()
+      : { ok: false, reason: "unavailable", message: untrusted.message }
   );
 });
 

@@ -136,3 +136,7 @@ dist
 __pycache__/
 .mimosa/
 .zcode/
+
+# Private driver bundle (Tactrix installer + passkey hash) and private builds
+resources/driver/
+dist-private/

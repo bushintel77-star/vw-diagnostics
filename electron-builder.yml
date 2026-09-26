@@ -12,6 +12,9 @@ files:
   # Test-only transport fixture (fake VIN/DTCs for CI selftest) — must never
   # ship inside the packaged app.
   - '!resources/sim_fixture.py'
+  # Passkey-gated driver bundle (Tactrix's installer) — private builds only,
+  # via electron-builder.private.yml. Never in a public release.
+  - '!resources/driver/**'
   - '!tests/**'
   - '!scripts/**'
 asarUnpack:

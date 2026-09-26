@@ -434,3 +434,72 @@ export type UpdateCheckResult =
 export type CheckForUpdateFn = () => Promise<UpdateCheckResult>;
 
 export type OpenUpdateDownloadFn = () => Promise<void>;
+
+// --- Cable setup (plug-and-play wizard; the main process does all probing) ---
+
+/** Device Manager's view of the interface. "absent" = not plugged in;
+ *  "blocked" = Windows refused to load its driver (Code 39/52); "no_driver"
+ *  = present with no driver attached (Code 28); "unknown" = could not ask. */
+export type CableState =
+  | "absent"
+  | "ready"
+  | "blocked"
+  | "no_driver"
+  | "problem"
+  | "unknown";
+
+/** Read-only interpreter <-> driver check (the monitor's --preflight). */
+export interface CablePreflight {
+  ready: boolean;
+  message: string;
+  bitness: number | null;
+  python: string | null;
+}
+
+export interface CableSetupStatus {
+  platformSupported: boolean;
+  /** Windows build number; 22000 and above is Windows 11. */
+  windowsBuild: number | null;
+  /** A Tactrix J2534 04.04 registration exists in either registry view. */
+  driverInstalled: boolean;
+  /** This (private) build carries the pinned installer + passkey hash. */
+  driverBundled: boolean;
+  cable: CableState;
+  /** Device Manager problem code when the cable is present with a problem. */
+  cableProblemCode: number | null;
+  /** Only filled by a full check; quick polls leave it null. */
+  preflight: CablePreflight | null;
+  /** Passkey lockout remaining after repeated wrong entries. */
+  lockedForSeconds: number;
+  /** A correct passkey was entered recently — retries need no re-entry. */
+  unlocked: boolean;
+  checkedAt: string;
+}
+
+// Authentication and action are separate calls: the passkey answer is
+// instant, and the (long, UAC-prompted) install runs only while unlocked.
+export type DriverUnlockResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: "bad_passkey" | "locked" | "unavailable";
+      message: string;
+      attemptsLeft?: number;
+      lockedForSeconds?: number;
+    };
+
+export type DriverInstallResult =
+  | { ok: true; message: string }
+  | {
+      ok: false;
+      reason: "not_unlocked" | "declined" | "busy" | "unavailable" | "failed";
+      message: string;
+    };
+
+export type GetCableSetupStatusFn = (options?: {
+  full?: boolean;
+}) => Promise<CableSetupStatus>;
+
+export type UnlockDriverFn = (passkey: string) => Promise<DriverUnlockResult>;
+
+export type InstallDriverFn = () => Promise<DriverInstallResult>;

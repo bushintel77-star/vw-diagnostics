@@ -2,16 +2,43 @@
  * Live web bridge. In a plain browser there is no Electron preload; if the
  * local live server (scripts/dev-web.mjs) is running, connect to the REAL
  * Python monitor over SSE/HTTP and expose it as `window.context`. When the
- * server is unreachable we install an honest "not connected" context —
+ * server is unreachable we install an honest "not connected" context â€”
  * never fabricated data.
  */
 import {
+  CableSetupStatus,
   DiagnosticCommand,
   DiagnosticCommandResult,
   DiagnosticEventListener,
   DiagnosticEvent,
   DiagnosticSessionResult,
+  DriverInstallResult,
+  DriverUnlockResult,
 } from "@shared/types";
+
+// Cable setup probes Device Manager and runs an elevated installer â€” desktop
+// only. The browser reports "unsupported" so the wizard never offers it.
+const browserCableStatus = (): Promise<CableSetupStatus> =>
+  Promise.resolve({
+    platformSupported: false,
+    windowsBuild: null,
+    driverInstalled: false,
+    driverBundled: false,
+    cable: "unknown",
+    cableProblemCode: null,
+    preflight: null,
+    lockedForSeconds: 0,
+    unlocked: false,
+    checkedAt: new Date().toISOString(),
+  });
+
+const DESKTOP_ONLY = "Cable setup runs in the desktop app.";
+
+const browserUnlockDriver = (): Promise<DriverUnlockResult> =>
+  Promise.resolve({ ok: false, reason: "unavailable", message: DESKTOP_ONLY });
+
+const browserInstallDriver = (): Promise<DriverInstallResult> =>
+  Promise.resolve({ ok: false, reason: "unavailable", message: DESKTOP_ONLY });
 
 // Same-origin proxy path (vite proxies /live to the monitor server); the
 // direct address is the fallback when the renderer is served elsewhere.
@@ -140,6 +167,9 @@ async function tryLiveBridge(): Promise<boolean> {
         reason: "browser session",
       }),
     openUpdateDownload: () => Promise.resolve(),
+    getCableSetupStatus: browserCableStatus,
+    unlockDriver: browserUnlockDriver,
+    installDriver: browserInstallDriver,
   };
 
   return true;
@@ -147,14 +177,14 @@ async function tryLiveBridge(): Promise<boolean> {
 
 /**
  * Browser without the dev bridge: an honest "not connected" context. Every
- * call reports that no monitor is reachable — fabricated vehicle data is
+ * call reports that no monitor is reachable â€” fabricated vehicle data is
  * never served as a stand-in.
  */
 const installOfflineContext = (): void => {
   const notConnected = {
     started: false,
     message:
-      "No monitor bridge — start the desktop app, or npm run dev:web for a browser session.",
+      "No monitor bridge â€” start the desktop app, or npm run dev:web for a browser session.",
   };
   window.context = {
     getVersions: () =>
@@ -172,6 +202,9 @@ const installOfflineContext = (): void => {
         reason: "browser session",
       }),
     openUpdateDownload: () => Promise.resolve(),
+    getCableSetupStatus: browserCableStatus,
+    unlockDriver: browserUnlockDriver,
+    installDriver: browserInstallDriver,
   };
 };
 

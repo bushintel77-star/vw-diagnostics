@@ -19,6 +19,29 @@ test('explicit Python override is authoritative', () => {
   assert.deepEqual(pythonCandidates({ VWD_PYTHON: 'custom.exe' }, 'win32'), [{ command: 'custom.exe', args: [] }]);
 });
 
+test('standalone preflight (setup wizard) falls back and never opens a live session', async () => {
+  const calls = [];
+  const host = new MonitorProcess('monitor.py', () => {}, { env: {}, platform: 'win32', spawn(command, args) {
+    calls.push(args); const p = child();
+    queueMicrotask(() => (calls.length === 1 ? setup(p, { ready: false, message: 'no 32-bit Python' }) : setup(p)));
+    return p;
+  }});
+  const result = await host.preflight();
+  assert.equal(result.ready, true);
+  assert.equal(result.bitness, 32);
+  assert.ok(calls.every(args => args.includes('--preflight')));
+  assert.equal(host.running, false);
+});
+
+test('standalone preflight reports every candidate failure', async () => {
+  const host = new MonitorProcess('monitor.py', () => {}, { env: {}, platform: 'win32', spawn() {
+    const p = child(); queueMicrotask(() => setup(p, { ready: false, message: 'nope' })); return p;
+  }});
+  const result = await host.preflight();
+  assert.equal(result.ready, false);
+  assert.equal(result.message, 'nope\nnope\nnope');
+});
+
 test('preflight falls back, first live burst is retained, and only one live process is opened', async () => {
   const events = []; const calls = []; let live;
   const host = new MonitorProcess('monitor.py', e => events.push(e), { env: {}, platform: 'win32', spawn(command, args) {

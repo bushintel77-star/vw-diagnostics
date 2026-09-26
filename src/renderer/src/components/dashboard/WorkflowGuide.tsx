@@ -45,7 +45,7 @@ const STAGES: Stage[] = [
     title: "2 · Keep the compatible J2534 driver",
     status: "later",
     how:
-      "Use the driver package confirmed for your adapter. If it is already installed, keep it. This app includes its Python wrapper and does not install drivers or run firmware updaters.",
+      "Use the driver package confirmed for your adapter. If it is already installed, keep it. The Cable setup wizard (header) checks it for you; a private build can launch the pinned 1.01.4341 installer behind a passkey. The app never runs firmware updaters.",
     fixes: [
       "For a clone using a legacy driver, avoid newer Tactrix/EcuFlash installers and firmware updates.",
       "A 32-bit op20pt32.dll needs 32-bit Python even on 64-bit Windows 11. Set VWD_PYTHON if automatic selection fails.",
