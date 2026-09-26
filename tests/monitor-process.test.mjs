@@ -104,3 +104,22 @@ test('stopping waits for the old child and suppresses its final events', async (
   assert.equal(events.some(e => e.message === 'old session'), false);
   assert.equal(events.at(-1).message, 'Session stopped by user.');
 });
+
+test('the final baselines save from a stopping monitor is still delivered', async () => {
+  let live; const events = [];
+  const host = new MonitorProcess('monitor.py', e => events.push(e), { env: { VWD_PYTHON: 'legacy' }, spawn(command, args) {
+    const p = child(); queueMicrotask(() => {
+      if (args.includes('--preflight')) setup(p);
+      else { live = p; p.stdout.write('{"type":"status","phase":"starting"}\n'); }
+    }); return p;
+  }});
+  await host.start();
+  const stopping = host.stop();
+  live.stdout.write('{"type":"baselines","vin":"WV1","sessions":1,"channels":{}}\n');
+  live.stdout.write('{"type":"status","phase":"disconnected","message":"Session ended"}\n');
+  await new Promise(resolve => setImmediate(resolve));
+  live.close();
+  await stopping;
+  assert.equal(events.some(e => e.type === 'baselines' && e.vin === 'WV1'), true);
+  assert.equal(events.some(e => e.message === 'Session ended'), false);
+});

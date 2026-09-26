@@ -23,6 +23,9 @@ export class MonitorProcess {
     this.starting = null;
     this.generation = 0;
     this.stopping = null;
+    // The process being stopped: its last data events (the final baselines
+    // save) are still delivered while it shuts down; its status is not.
+    this.stoppingProc = null;
   }
 
   get running() { return this.starting !== null || this.proc !== null || this.stopping !== null; }
@@ -118,10 +121,14 @@ export class MonitorProcess {
         // Attach the line parser immediately so the initial event burst is retained.
         const lines = createInterface({ input: proc.stdout });
         lines.on('line', (line) => {
-          if (generation !== this.generation || !line.trim()) return;
+          if (!line.trim()) return;
           let event;
           try { event = JSON.parse(line); } catch { return; }
           if (!event || typeof event.type !== 'string') return;
+          if (generation !== this.generation) {
+            if (proc === this.stoppingProc && event.type === 'baselines') this.onEvent(event);
+            return;
+          }
           if (event.type === 'error' || (event.type === 'status' && event.phase === 'error')) errorSeen = true;
           this.onEvent(event);
           finish({ started: true, message: 'Diagnostic monitor started; attempting live J2534 connection.' });
@@ -150,18 +157,20 @@ export class MonitorProcess {
     ++this.generation; // suppress callbacks from the old session
     const proc = this.proc;
     const pendingStart = this.starting;
+    this.stoppingProc = proc;
     this.stopping = (async () => {
       if (proc && proc.exitCode === null && proc.signalCode === null) {
         await new Promise((resolve) => {
           proc.once('close', resolve);
           // EOF permits the monitor to close its device; kill if a driver is stuck.
           proc.stdin?.end();
-          const timer = setTimeout(() => proc.kill(), 1500);
+          const timer = setTimeout(() => proc.kill(), 5000);
           proc.once('close', () => clearTimeout(timer));
         });
       }
       await pendingStart;
       this.proc = null;
+      this.stoppingProc = null;
       this.onEvent({ type: 'status', phase: 'disconnected', mode: 'live', message: 'Session stopped by user.' });
       return { started: false, message: 'Diagnostic session stopped.' };
     })();

@@ -41,6 +41,9 @@ TCU_RESPONSE_ID = 0x7E9
 # can't hang the session forever.
 P2_STAR_TIMEOUT_MS = 5000
 MAX_PENDING_FRAMES = 10
+# Late responses to an earlier, timed-out request are discarded; this many
+# in a row means the channel is confused, not merely late.
+MAX_STALE_FRAMES = 4
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +134,7 @@ class UdsClient:
         self.transport.write(self.request_id, request)
         timeout_ms = self.timeout_ms
         pending = 0
+        stale = 0
         while True:
             response = self.transport.read(self.response_id, timeout_ms)
             if response is None:
@@ -140,7 +144,14 @@ class UdsClient:
                 raise TransportError("empty UDS response")
             if response[0] != 0x7F:
                 if response[0] != request[0] + 0x40:
-                    raise TransportError(f"unexpected response {response.hex()} to {request.hex()}")
+                    # A late answer to an earlier request that timed out.
+                    # Consuming it keeps request/response pairing in sync
+                    # instead of failing every request that follows.
+                    stale += 1
+                    if stale > MAX_STALE_FRAMES:
+                        raise TransportError(
+                            f"unexpected response {response.hex()} to {request.hex()}")
+                    continue
                 return response
             if len(response) < 3:
                 raise TransportError(
@@ -148,6 +159,13 @@ class UdsClient:
                     f"0x{request[0]:02X}: {response.hex()}")
             service = response[1]
             code = response[2]
+            if service != request[0]:
+                stale += 1
+                if stale > MAX_STALE_FRAMES:
+                    raise TransportError(
+                        f"negative response for service 0x{service:02X} "
+                        f"while waiting on 0x{request[0]:02X}")
+                continue
             if code == 0x78 and service == request[0]:
                 # ResponsePending for OUR service — wait on P2* for the
                 # real answer, bounded by max_pending_frames.
@@ -530,6 +548,8 @@ def describe_passthru_setup() -> list[str]:
         lines.append(f"{d['view']} registry view: {d['name']}"
                      + (f" -> {d['dll']}" if d["dll"]
                         else " (no FunctionLibrary path)"))
+    for p in interface_device_problems():
+        lines.append(f"interface {p['instanceId']}: {p['detail']}")
     return lines
 
 
@@ -567,6 +587,79 @@ def passthru_open_error(cause: Exception) -> str:
         msg += (f" ({hidden[0]['view']}-view registration(s) also exist — "
                 f"{hidden_names} — unusable by a {bitness}-bit process.)")
     return msg
+
+
+# ---------------------------------------------------------------------------
+# Windows device status for the interface itself. A driver that Windows
+# refused to load looks exactly like "no device" from the J2534 DLL, so the
+# Device Manager problem code is read (Configuration Manager, read-only) and
+# folded into the open error. Openport 2.0 and its clones enumerate as FTDI
+# VID 0403 with Tactrix PIDs.
+# ---------------------------------------------------------------------------
+
+INTERFACE_HARDWARE_IDS = ("USB\\VID_0403&PID_CC4C", "USB\\VID_0403&PID_CC4D")
+
+DEVICE_PROBLEMS = {
+    10: "Windows cannot start the device (Code 10)",
+    28: "no driver is installed for it (Code 28)",
+    39: ("Windows refused to load its driver (Code 39). On Windows 11 this is "
+         "the Windows Driver Policy blocking older cross-signed drivers such as "
+         "openport.sys — no app setting can get past it; see HARDWARE.md "
+         "'Windows 11 driver block (Code 39)'"),
+    43: "Windows stopped the device after it reported a problem (Code 43)",
+    52: "Windows cannot verify its driver signature (Code 52)",
+}
+
+
+def interface_device_problems() -> list[dict]:
+    """[{instanceId, code, detail}] for connected pass-thru interfaces that
+    Device Manager flags with a problem. Empty off Windows, when none is
+    plugged in, or on any lookup error — this only ever adds a hint."""
+    if sys.platform != "win32":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+        cfg = ctypes.WinDLL("cfgmgr32")
+        CM_GETIDLIST_FILTER_ENUMERATOR = 0x1
+        DN_HAS_PROBLEM = 0x400
+        size = wintypes.ULONG(0)
+        if cfg.CM_Get_Device_ID_List_SizeW(
+                ctypes.byref(size), "USB", CM_GETIDLIST_FILTER_ENUMERATOR) != 0:
+            return []
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if cfg.CM_Get_Device_ID_ListW(
+                "USB", buffer, size, CM_GETIDLIST_FILTER_ENUMERATOR) != 0:
+            return []
+        ids = [i for i in buffer[:size.value].split("\x00") if i]
+        found = []
+        for instance in ids:
+            if not instance.upper().startswith(INTERFACE_HARDWARE_IDS):
+                continue
+            devinst = wintypes.DWORD(0)
+            # Normal locate = present devices only; unplugged ghosts fail.
+            if cfg.CM_Locate_DevNodeW(ctypes.byref(devinst), instance, 0) != 0:
+                continue
+            status, problem = wintypes.ULONG(0), wintypes.ULONG(0)
+            if cfg.CM_Get_DevNode_Status(ctypes.byref(status), ctypes.byref(problem),
+                                         devinst, 0) != 0:
+                continue
+            if status.value & DN_HAS_PROBLEM:
+                code = problem.value
+                found.append({"instanceId": instance, "code": code,
+                              "detail": DEVICE_PROBLEMS.get(
+                                  code, f"Device Manager reports problem code {code}")})
+        return found
+    except Exception:
+        return []
+
+
+def interface_problem_hint() -> str:
+    problems = interface_device_problems()
+    if not problems:
+        return ""
+    return " Interface status: " + "; ".join(
+        f"{p['instanceId']}: {p['detail']}" for p in problems) + "."
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +725,8 @@ def preflight() -> dict:
         import j2534  # only stdlib imports; construction loads the DLL
         result["dll"] = select_passthru_dll()
         result["ready"] = True
-        result["message"] = "Interpreter and existing DLL match; device connection not tested."
+        result["message"] = ("Interpreter and existing DLL match; device connection not tested."
+                             + interface_problem_hint())
     except (ImportError, TransportError, OSError) as exc:
         result["message"] = str(exc)
     return result
@@ -670,7 +764,8 @@ class J2534Transport:
                               response_id=self.response_id)
         except (OSError, AttributeError, _j.J2534Error) as exc:
             self.close()
-            raise TransportError(f"J2534 open failed using {dll_path}: {exc}") from exc
+            raise TransportError(f"J2534 open failed using {dll_path}: {exc}."
+                                 + interface_problem_hint()) from exc
 
     def versions(self) -> dict:
         return self._device.read_version() if self._device else {}
@@ -780,7 +875,7 @@ def _selftest() -> int:
         def write(self, can_id, data): self.requests.append(bytes(data))
         def read(self, can_id, timeout):
             self.timeouts.append(timeout)
-            return self.responses.pop(0)
+            return self.responses.pop(0) if self.responses else None
 
     # DID probing: one DID answers, one is rejected (0x7F 22 31)
     client = UdsClient(RecordingTransport([
@@ -920,13 +1015,21 @@ def _selftest() -> int:
               "responsePending" in str(exc) and len(recorder.responses) == 16,
               str(exc))
 
-    # A pending echo for a DIFFERENT service is not ours — raise, don't swallow
-    client = UdsClient(RecordingTransport([bytes.fromhex("7F2E78")]))
+    # A response for a DIFFERENT service is a late answer to an earlier,
+    # timed-out request: discard it and keep waiting for ours.
+    client = UdsClient(RecordingTransport([
+        bytes.fromhex("7F2E78"), bytes.fromhex("5902FF"),
+        bytes.fromhex("62F40C0C30")]))
+    check("stale responses for other services skipped",
+          client.read_did(0xF40C) == bytes.fromhex("0C30"))
+
+    # ...but a channel that only ever answers something else still fails
+    client = UdsClient(RecordingTransport([bytes.fromhex("5902FF")] * 10))
     try:
         client.read_did(0xF40C)
-        check("0x78 wrong-service echo raises", False, "no exception")
+        check("endless stale responses raise", False, "no exception")
     except TransportError as exc:
-        check("0x78 wrong-service echo raises", "0x78" in str(exc), str(exc))
+        check("endless stale responses raise", "unexpected" in str(exc), str(exc))
 
     # Every other NRC still raises immediately
     client = UdsClient(RecordingTransport([bytes.fromhex("7F2231")]))

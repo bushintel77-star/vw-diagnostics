@@ -135,15 +135,13 @@ If you enable Windows Developer Mode (Settings → System → For developers), y
 
 ### Publishing the landing page + download
 
-`site/index.html` is a self-contained landing page (dark theme, matches the app icon) with a download button and install guide. To publish:
+`site/index.html` is a self-contained landing page (dark theme, matches the app icon) with a download button and install guide. It is served from the `gh-pages` branch at https://bushintel77-star.github.io/vw-diagnostics/, together with `update-floor.json` (the kill-switch floor the app checks on launch). To ship a version:
 
-1. Create a GitHub repo and push this project.
-2. Cut a release with the installer attached:
+1. Cut a release with the installer attached:
    ```
-   gh release create v1.0.0 dist/vw-diagnostics-setup.exe --title "v1.0.0"
+   gh release create vX.Y.Z dist/vw-diagnostics-setup.exe --title "vX.Y.Z"
    ```
-3. Replace `YOUR-USERNAME` in `site/index.html` (two links: download + source).
-4. Host `site/` anywhere static — GitHub Pages (Settings → Pages → deploy from the `site/` folder), Netlify drop, or Cloudflare Pages.
+2. Copy any changed `site/` files to the `gh-pages` branch.
 
 The download link uses the `releases/latest/download/vw-diagnostics-setup.exe` pattern with a version-stable filename, so it always serves the newest release without editing the page again.
 

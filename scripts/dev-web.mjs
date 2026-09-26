@@ -39,6 +39,11 @@ function broadcastLine(line) {
   if (!line.trim()) return;
   try {
     const event = JSON.parse(line);
+    // Raw ECU image chunks stay on this host, as they do in Electron.
+    if (event.type === "flash" && event.chunkB64) {
+      delete event.chunkB64;
+      line = JSON.stringify(event);
+    }
     if (event.type === "status" && ["starting", "disconnected", "error"].includes(event.phase)) lastByType.clear();
     if (REPLAY_TYPES.has(event.type)) lastByType.set(event.type, line);
   } catch {
@@ -84,7 +89,15 @@ function authorized(req) {
   return req.headers["x-live-token"] === LIVE_TOKEN;
 }
 
+// DNS rebinding guard: a hostile page re-pointed at 127.0.0.1 is same-origin
+// with this server, so the Host header is the only thing that tells it apart.
+const ALLOWED_HOSTS = new Set([LIVE_PORT, VITE_PORT].flatMap((port) => [`localhost:${port}`, `127.0.0.1:${port}`]));
+
 const server = createServer(async (req, res) => {
+  if (!ALLOWED_HOSTS.has(req.headers.host ?? "")) {
+    res.writeHead(403);
+    return res.end();
+  }
   const url = new URL(req.url, `http://127.0.0.1:${LIVE_PORT}`);
   const CORS = corsHeaders(req);
   if (req.method === "OPTIONS") {

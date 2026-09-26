@@ -186,7 +186,8 @@ class PreflightTests(unittest.TestCase):
 class ProtocolTests(unittest.TestCase):
     def client(self, *responses):
         transport = Mock()
-        transport.read.side_effect = responses
+        # After the scripted frames the bus goes quiet: read() times out.
+        transport.read.side_effect = list(responses) + [None] * 8
         return uds.UdsClient(transport)
 
     def test_multiple_four_byte_dtcs_keep_failure_type_and_status(self):
@@ -228,6 +229,75 @@ class ProtocolTests(unittest.TestCase):
              patch.object(monitor, 'emit'), patch.object(monitor, 'start_command_worker'):
             monitor.run(None, 2, 1)
         transport.close.assert_called_once()
+
+
+class SessionResilienceTests(unittest.TestCase):
+    def stub_client(self, dtcs=(), fail_clear=False):
+        client = Mock()
+        client.read_did.side_effect = uds.TransportError('unsupported')
+        client.read_vin.return_value = 'WV1ZZZ2H0JW123456'
+        client.read_dtcs.return_value = list(dtcs)
+        client.read_live.side_effect = lambda did_map: {name: 1 for name in did_map}
+        if fail_clear:
+            client.clear_dtcs.side_effect = uds.TransportError('negative response 0x22')
+        return client
+
+    def run_session(self, transport, stdin_lines):
+        events = []
+        with patch.object(monitor, 'open_real_transport', return_value=transport), \
+             patch.object(monitor, 'emit', side_effect=events.append), \
+             patch.object(monitor, 'LIVE_INTERVAL_S', 0.01), \
+             patch('sys.stdin', io.StringIO(''.join(json.dumps(l) + '\n' for l in stdin_lines))):
+            monitor.run(0.3, 2, 1)
+        return events
+
+    def test_refused_command_is_logged_and_session_continues(self):
+        transport = monitor.RealTransport(self.stub_client(fail_clear=True))
+        transport.client.transport = Mock()
+        events = self.run_session(transport, [{'cmd': 'clear_dtc'}])
+        messages = [e.get('message', '') for e in events]
+        self.assertTrue(any("Command 'clear_dtc' failed" in m for m in messages))
+        self.assertFalse(any(e.get('phase') == 'error' for e in events))
+
+    def test_extended_session_refusal_is_not_fatal(self):
+        client = self.stub_client()
+        client.enter_session.side_effect = uds.TransportError('negative response 0x7F')
+        with patch.object(monitor, 'emit'):
+            info = monitor.RealTransport(client).read_info()
+        self.assertEqual(info['vin'], 'WV1ZZZ2H0JW123456')
+
+    def test_clear_reports_codes_present_before(self):
+        record = {'code': 'P0299', 'statusByte': 0x08}
+        transport = monitor.RealTransport(self.stub_client(dtcs=[record]))
+        self.assertEqual(transport.clear_dtcs(), 1)
+
+    def test_stop_request_skips_remaining_live_reads(self):
+        client = self.stub_client()
+        transport = monitor.RealTransport(client)
+        transport.stop_event.set()
+        values = transport.sample(0)
+        client.read_live.assert_not_called()
+        self.assertTrue(all(v is None for v in values.values()))
+
+
+class InterfaceStatusTests(unittest.TestCase):
+    def test_blocked_driver_is_named_in_open_error(self):
+        blocked = [{'instanceId': 'USB\\VID_0403&PID_CC4D\\X', 'code': 39, 'detail': uds.DEVICE_PROBLEMS[39]}]
+        with patch.object(uds, 'select_passthru_dll', return_value='op20pt32.dll'), \
+             patch.object(j, 'J2534Device', side_effect=OSError('device not connected')), \
+             patch.object(uds, 'interface_device_problems', return_value=blocked):
+            with self.assertRaises(uds.TransportError) as ctx:
+                uds.J2534Transport().open()
+        self.assertIn('Code 39', str(ctx.exception))
+        self.assertIn('device not connected', str(ctx.exception))
+
+    def test_no_hint_when_interface_is_healthy(self):
+        with patch.object(uds, 'interface_device_problems', return_value=[]):
+            self.assertEqual(uds.interface_problem_hint(), '')
+
+    def test_device_status_lookup_is_inert_off_windows(self):
+        if sys.platform != 'win32':
+            self.assertEqual(uds.interface_device_problems(), [])
 
 
 if __name__ == '__main__': unittest.main()

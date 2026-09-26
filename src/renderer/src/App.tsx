@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -115,7 +115,8 @@ const App = () => {
   const [history, setHistory] = useState<Partial<Record<keyof LiveValues, number[]>>>({});
   const [selectedChannel, setSelectedChannel] = useState<keyof LiveValues>("rpm");
   const [updates, setUpdates] = useState<number>(0);
-  const [log, setLog] = useState<string[]>([]);
+  const [log, setLog] = useState<{ id: number; text: string }[]>([]);
+  const logId = useRef(0);
   const [busy, setBusy] = useState<boolean>(false);
   const [verification, setVerification] = useState<DiagnosticVerificationEvent | null>(null);
   const [lastLiveAt, setLastLiveAt] = useState<number | null>(null);
@@ -123,7 +124,8 @@ const App = () => {
   const [dutyProfile, setDutyProfile] = useState<DutyProfile>("standard");
 
   const pushLog = (text: string): void => {
-    const entry = `${new Date().toLocaleTimeString()}  ${text}`;
+    // A counter id, not the text: the same message can repeat in one second.
+    const entry = { id: ++logId.current, text: `${new Date().toLocaleTimeString()}  ${text}` };
     setLog((prev) => [entry, ...prev].slice(0, 10));
   };
 
@@ -152,6 +154,8 @@ const App = () => {
             setAnalysis(null);
             setVerification(null);
             setFlash(null);
+            setDeletions(null);
+            setMods(null);
           }
           break;
         case "info":
@@ -367,7 +371,7 @@ const App = () => {
       postFlashHealthCheck: verification,
       liveSnapshot: live,
       trends: history,
-      eventLog: log,
+      eventLog: log.map((entry) => entry.text),
     };
     const blob = new Blob([JSON.stringify(report, null, 2)], {
       type: "application/json",
@@ -677,7 +681,7 @@ const App = () => {
           ) : (
             <ul className="space-y-1 font-mono text-xs text-muted-foreground">
               {log.map((entry) => (
-                <li key={entry}>{entry}</li>
+                <li key={entry.id}>{entry.text}</li>
               ))}
             </ul>
           )}

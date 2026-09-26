@@ -88,6 +88,41 @@ When several compatible DLLs are registered, select one with `VWD_J2534_DLL`;
 the app will not open an arbitrary driver. The optional `VWD_J2534_SHA256`
 check runs before the DLL is loaded.
 
+### Windows 11 driver block (Code 39)
+
+Since the April 2026 Windows updates, Windows 11 (24H2 and later) no longer
+trusts kernel drivers signed under the old cross-signing program. The
+Openport 2.0 USB driver `openport.sys` from `openport2_setup_1004341.exe` is
+one of them. The cable still appears in Device Manager, but with a yellow
+mark and **Code 39**, and every J2534 open fails. When this happens the app
+names the Code 39 in its connection error; no app setting can get past it.
+
+Confirm it (read-only) from an administrator PowerShell with the cable in
+the PC only:
+
+```powershell
+Get-PnpDevice | ? FriendlyName -match 'openport|tactrix' | ft FriendlyName,Status,Problem -auto
+Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational' -MaxEvents 500 |
+  ? Message -match 'openport' | select -First 2 TimeCreated,Id,Message | fl
+```
+
+Options, least invasive first. None of them replaces the 1.01.0.4341 driver.
+
+1. **A Windows 10 PC**, or a **Windows 10 virtual machine** (VirtualBox with
+   the cable passed through over USB). The policy is not on Windows 10, so
+   the legacy driver loads there and the host PC stays untouched.
+2. **Remove the policy** on the Windows 11 PC, as Microsoft documents for
+   July 2026 and later builds: `CiTool.exe --remove-policy
+   "{8F9CB695-5D48-48D6-A329-7202B44607E3}"` from an administrator prompt,
+   then restart. This lowers driver security for the whole PC, there is no
+   per-driver exception, and Microsoft's only way back is restoring a
+   backup or reinstalling Windows.
+
+The "Microsoft Vulnerable Driver Blocklist" switch under Windows Security >
+Device security > Core isolation is a different list and does not lift
+this block. Sources: [The Windows Driver Policy](https://support.microsoft.com/en-us/windows/hardware/drivers/the-windows-driver-policy),
+[Removing trust for the cross-signed driver program](https://techcommunity.microsoft.com/blog/windows-itpro-blog/advancing-windows-driver-security-removing-trust-for-the-cross-signed-driver-pro/4504818).
+
 ## 3. First-connect checklist (in order)
 
 1. **Ignition on, engine off** (terminal 15). Laptop on charger — a full
@@ -203,6 +238,7 @@ these for the external bench flash; it never applies them itself.
 |---|---|
 | Missing `j2534.py` or `uds.py` | Rebuild/reinstall the app with all three bundled Python files; no pip package is required |
 | "registered only in the 32-bit registry view" | 32-bit vendor DLL (Openport clone) under a 64-bit Python — install a 32-bit Python, set `VWD_PYTHON` |
+| "Code 39" in the connection error / yellow mark in Device Manager | Windows 11 is blocking the legacy `openport.sys` — see §2, Windows 11 driver block |
 | "No J2534 PassThru device is registered" | Vendor J2534 driver not installed — install it, check the preflight log lines |
 | Connects, no DID answers | Wrong pins — the Amarok uses pins 6/14 for CAN; check the adapter |
 | VIN reads, rail/boost/pedal missing | Candidate DIDs didn't answer — update `DID_CANDIDATES` from label data |
