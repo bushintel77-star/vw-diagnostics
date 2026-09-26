@@ -27,6 +27,8 @@ import ModsPanel, { ScopeCard } from "@/components/dashboard/ModsPanel";
 import UpdateBanner from "@/components/dashboard/UpdateBanner";
 import UpdateGate from "@/components/dashboard/UpdateGate";
 import VersionBadge from "@/components/dashboard/VersionBadge";
+import ConnectionProgress from "@/components/dashboard/ConnectionProgress";
+import { Skeleton } from "@/components/ui/skeleton";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
 import WorkflowGuide from "@/components/dashboard/WorkflowGuide";
@@ -484,6 +486,16 @@ const App = () => {
         </Card>
       )}
 
+      {/* connecting — each step advances on a real monitor event */}
+      {running && live === null && status?.phase !== "error" && (
+        <ConnectionProgress
+          phase={status?.phase ?? null}
+          hasInfo={info !== null}
+          hasDids={dids !== null}
+          hasLive={false}
+        />
+      )}
+
       {/* no interface attached — what the user needs to do */}
       {!running && (status === null || status.phase === "disconnected") && (
         <Card>
@@ -554,9 +566,9 @@ const App = () => {
             <CardContent className="space-y-3">
               {running ? (
                 <>
-                  <div className="h-5 w-48 animate-pulse rounded-md bg-muted" />
-                  <div className="h-4 w-full animate-pulse rounded-md bg-muted" />
-                  <div className="h-4 w-3/4 animate-pulse rounded-md bg-muted" />
+                  <Skeleton className="h-5 w-48" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">
@@ -642,10 +654,7 @@ const App = () => {
             running ? (
               <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
                 {GAUGES.map((gauge) => (
-                  <div
-                    key={gauge.key}
-                    className="mx-auto h-24 w-24 animate-pulse rounded-full bg-muted"
-                  />
+                  <Skeleton key={gauge.key} className="mx-auto h-24 w-24 rounded-full" />
                 ))}
               </div>
             ) : (
@@ -655,7 +664,7 @@ const App = () => {
               </p>
             )
           ) : (
-            <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
+            <div className="grid grid-cols-3 gap-6 animate-fade-up sm:grid-cols-5 motion-reduce:animate-none">
               {GAUGES.map((gauge) => (
                 <Gauge
                   key={gauge.key}

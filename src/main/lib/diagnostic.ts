@@ -56,6 +56,9 @@ const emit = (sender: WebContents, event: DiagnosticEvent): void => {
 // ---------------------------------------------------------------------------
 
 let flashChunks: Buffer[] = [];
+// Progress reaches the renderer (bytes only, never chunk data), throttled.
+const PROGRESS_INTERVAL_MS = 120;
+let lastProgressAt = 0;
 
 const backupsDir = (): string => join(app.getPath("userData"), "backups");
 
@@ -92,7 +95,12 @@ function handleFlashEvent(sender: WebContents, event: DiagnosticFlashEvent): voi
     flashChunks = [];
   } else if (event.phase === "progress" && event.chunkB64) {
     flashChunks.push(Buffer.from(event.chunkB64, "base64"));
-    return; // progress chunks never cross into the renderer
+    const now = Date.now();
+    if (now - lastProgressAt < PROGRESS_INTERVAL_MS) return;
+    lastProgressAt = now;
+    // Chunk data never crosses into the renderer; the byte count does.
+    emit(sender, { type: "flash", phase: "progress", bytes: event.bytes, totalBytes: event.totalBytes });
+    return;
   } else if (event.phase === "complete") {
     void persistBackup(sender, event);
     return;

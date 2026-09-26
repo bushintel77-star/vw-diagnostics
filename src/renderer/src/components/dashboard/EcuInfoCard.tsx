@@ -1,6 +1,7 @@
 import { HardDriveDownload } from "lucide-react";
 import { DiagnosticFlashEvent, DidMapEntry, EcuInfo } from "@shared/types";
 
+import { cn } from "@/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,16 +31,38 @@ const formatBytes = (bytes: number): string =>
     ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     : `${(bytes / 1024).toFixed(0)} kB`;
 
+// Each probed channel "lights up" in turn; order and colour are the real
+// probe result (answered vs not), only the reveal is staggered.
+const STAGGER_MS = 70;
+
 const DidMap = ({ entries }: { entries: DidMapEntry[] }) => (
   <div className="space-y-1.5">
     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
       Live DID map (UDS 0x22 probe)
     </p>
+    <div className="flex items-center gap-2">
+      <div aria-hidden className="flex flex-wrap gap-1">
+        {entries.map((entry, index) => (
+          <span
+            key={`cell-${entry.channel}-${entry.did}`}
+            className={cn(
+              "size-3 rounded-[3px] animate-cell-pop motion-reduce:animate-none",
+              entry.ok ? "bg-chart-2" : "border border-border bg-muted"
+            )}
+            style={{ animationDelay: `${index * STAGGER_MS}ms` }}
+          />
+        ))}
+      </div>
+      <span className="text-[11px] tabular-nums text-muted-foreground">
+        {entries.filter((entry) => entry.ok).length} of {entries.length} channels answered
+      </span>
+    </div>
     <ul className="grid gap-1 text-xs">
-      {entries.map((entry) => (
+      {entries.map((entry, index) => (
         <li
           key={`${entry.channel}-${entry.did}`}
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 animate-fade-up motion-reduce:animate-none"
+          style={{ animationDelay: `${index * STAGGER_MS}ms` }}
           title={entry.note}
         >
           <Badge
@@ -59,6 +82,37 @@ const DidMap = ({ entries }: { entries: DidMapEntry[] }) => (
     </ul>
   </div>
 );
+
+// ECU memory as a grid of blocks, filled in read order as bytes arrive.
+const MEMORY_BLOCKS = 64;
+
+const MemoryMap = ({ pct }: { pct: number }) => {
+  const filled = Math.round((pct / 100) * MEMORY_BLOCKS);
+  return (
+    <div
+      role="progressbar"
+      aria-label="ECU backup progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      className="grid grid-cols-[repeat(16,minmax(0,1fr))] gap-[3px]"
+    >
+      {Array.from({ length: MEMORY_BLOCKS }, (_, index) => (
+        <span
+          key={index}
+          className={cn(
+            "h-2 rounded-[2px] transition-colors duration-300",
+            index < filled
+              ? "bg-chart-1"
+              : index === filled
+                ? "animate-pulse bg-chart-1/40 motion-reduce:animate-none"
+                : "bg-muted"
+          )}
+        />
+      ))}
+    </div>
+  );
+};
 
 const BackupControl = ({
   flash,
@@ -100,14 +154,13 @@ const BackupControl = ({
           </span>
         )}
       </div>
-      {pct !== null && (
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-chart-1 transition-all"
-            style={{ width: `${pct}%` }}
-          />
+      {busy && pct === null && (
+        // Read requested, no byte count yet: honest indeterminate sweep.
+        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          <div className="absolute inset-y-0 w-1/4 animate-sweep rounded-full bg-gradient-to-r from-transparent via-chart-1 to-transparent motion-reduce:animate-none" />
         </div>
       )}
+      {pct !== null && <MemoryMap pct={pct} />}
       {flash?.phase === "complete" && (
         <p className="text-xs text-chart-2">
           {flash.path ? (
@@ -145,7 +198,7 @@ interface EcuInfoCardProps {
 }
 
 const EcuInfoCard = ({ info, dids, flash, running, onBackup }: EcuInfoCardProps) => (
-  <Card>
+  <Card className="animate-fade-up motion-reduce:animate-none">
     <CardHeader>
       <CardTitle>ECU Identification</CardTitle>
       <CardDescription>UDS identification data</CardDescription>
