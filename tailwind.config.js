@@ -89,10 +89,6 @@ module.exports = {
         "lamp-blink": {
           "50%": { opacity: "0.15" },
         },
-        // Loading shimmer: a soft highlight travelling across a placeholder.
-        shimmer: {
-          "100%": { transform: "translateX(100%)" },
-        },
         // Indeterminate progress: a bar segment sweeping end to end.
         sweep: {
           "0%": { transform: "translateX(-100%)" },
@@ -124,7 +120,6 @@ module.exports = {
         "spin-slow": "spin 5s linear infinite",
         "bounce-slow": "bounce 3s infinite",
         "lamp-blink": "lamp-blink 1s steps(2, start) infinite",
-        shimmer: "shimmer 1.6s ease-in-out infinite",
         sweep: "sweep 1.4s ease-in-out infinite",
         "cell-pop": "cell-pop 0.4s ease-out both",
         "fade-up": "fade-up 0.45s ease-out both",

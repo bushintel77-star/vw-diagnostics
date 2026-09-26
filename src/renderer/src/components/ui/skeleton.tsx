@@ -1,6 +1,7 @@
 import { cn } from "@/utils"
 
-/** Loading placeholder with a travelling shimmer (static under reduced motion). */
+/** Static loading placeholder: no motion, so live numbers stay the only
+ *  thing moving on screen. */
 function Skeleton({
   className,
   ...props
@@ -8,10 +9,7 @@ function Skeleton({
   return (
     <div
       aria-hidden
-      className={cn(
-        "relative overflow-hidden rounded-md bg-muted before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer before:bg-gradient-to-r before:from-transparent before:via-chart-1/[0.14] before:to-transparent motion-reduce:before:hidden",
-        className
-      )}
+      className={cn("rounded-md bg-muted/70", className)}
       {...props}
     />
   )
