@@ -161,7 +161,7 @@ class J2534Device:
     def open(self, bitrate: int = 500000, response_id: int = 0x7E8):
         """Open the first device, connect ISO15765, set the flow-control
         filter so multi-frame responses reassemble in firmware."""
-        dev = U(0)
+        dev = ctypes.c_ulong(0)
         self._check(self._PassThruOpen(None, byref(dev)), "PassThruOpen")
         self.device_id = dev.value
 
@@ -177,7 +177,7 @@ class J2534Device:
             "api": api.value.decode("ascii", errors="replace"),
         }
 
-        chan = U(0)
+        chan = ctypes.c_ulong(0)
         self._check(
             self._PassThruConnect(
                 self.device_id, PROTO_ISO15765, 0, bitrate, byref(chan)),
@@ -209,7 +209,7 @@ class J2534Device:
         flow.TxFlags = 0
         flow.DataSize = 5
         flow.Data = struct.pack(">H", response_id) + b"\x30\x00\x00"
-        fid = U(0)
+        fid = ctypes.c_ulong(0)
         self._check(
             self._PassThruStartMsgFilter(
                 self.channel_id, FLOW_CONTROL_FILTER,
@@ -246,7 +246,7 @@ class J2534Device:
         payload = struct.pack(">H", can_id) + data
         msg.DataSize = len(payload)
         msg.Data = payload
-        num = U(1)
+        num = ctypes.c_ulong(1)
         self._check(
             self._PassThruWriteMsgs(
                 self.channel_id, byref(msg), byref(num), timeout_ms),
@@ -258,7 +258,7 @@ class J2534Device:
         if self.channel_id is None:
             raise J2534Error(0xFFFFFFFF, "channel not open")
         msgs = (PassThruMsg * max_msgs)()
-        num = U(max_msgs)
+        num = ctypes.c_ulong(max_msgs)
         status = self._PassThruReadMsgs(
             self.channel_id, msgs, byref(num), timeout_ms)
         if status == ERR_TIMEOUT:
