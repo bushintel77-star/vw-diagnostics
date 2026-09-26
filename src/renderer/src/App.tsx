@@ -28,6 +28,9 @@ import UpdateBanner from "@/components/dashboard/UpdateBanner";
 import UpdateGate from "@/components/dashboard/UpdateGate";
 import VersionBadge from "@/components/dashboard/VersionBadge";
 import ConnectionProgress from "@/components/dashboard/ConnectionProgress";
+import KeyNumbers, { KeyChannel, SessionStats, foldStats } from "@/components/dashboard/KeyNumbers";
+import RaceModeToggle from "@/components/dashboard/RaceModeToggle";
+import StatusBar from "@/components/dashboard/StatusBar";
 import { Skeleton } from "@/components/ui/skeleton";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
@@ -82,6 +85,14 @@ const GAUGES: GaugeConfig[] = [
   { key: "speedKph", label: "Vehicle Speed", unit: "km/h", min: 0, max: 200 },
 ];
 
+// The six numbers that lead the screen (telemetry hierarchy); the full
+// gauge set stays below.
+const KEY_CHANNELS: KeyChannel[] = (
+  ["rpm", "boostPressureKpa", "railPressureBar", "coolantTempC", "engineLoadPct", "batteryV"] as const
+).map((key) => GAUGES.find((gauge) => gauge.key === key)!);
+const KEY_KEYS = KEY_CHANNELS.map((channel) => channel.key);
+const RATE_WINDOW_MS = 5000;
+
 const HISTORY_LENGTH = 120; // ~60 s at 2 samples/s
 const STALE_AFTER_MS = 4000; // no live event for this long while running = stale
 
@@ -126,6 +137,9 @@ const App = () => {
   const [busy, setBusy] = useState<boolean>(false);
   const [verification, setVerification] = useState<DiagnosticVerificationEvent | null>(null);
   const [lastLiveAt, setLastLiveAt] = useState<number | null>(null);
+  const [sessionStats, setSessionStats] = useState<SessionStats>({});
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  const liveTimes = useRef<number[]>([]);
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [dutyProfile, setDutyProfile] = useState<DutyProfile>("standard");
 
@@ -147,12 +161,16 @@ const App = () => {
         case "status":
           setStatus(event);
           pushLog(event.message);
+          if (event.phase === "connected") setConnectedAt((at) => at ?? Date.now());
           if (["starting", "disconnected", "error"].includes(event.phase)) {
             // Session data ends with the session — a stale "clean" read or
             // frozen gauge must not persist as if it were current state.
             setCodes(null);
             setLive(null);
             setHistory({});
+            setSessionStats({});
+            setConnectedAt(null);
+            liveTimes.current = [];
             setLastLiveAt(null);
             setUpdates(0);
             setInfo(null);
@@ -181,6 +199,10 @@ const App = () => {
           setLive(event.values);
           setLastLiveAt(Date.now());
           setUpdates((n) => n + 1);
+          setSessionStats((prev) => foldStats(prev, event.values, KEY_KEYS));
+          liveTimes.current = [...liveTimes.current, Date.now()].filter(
+            (at) => Date.now() - at <= RATE_WINDOW_MS
+          );
           setHistory((prev) => {
             const next: Partial<Record<keyof LiveValues, number[]>> = {};
             for (const gauge of GAUGES) {
@@ -227,6 +249,9 @@ const App = () => {
           setCodes(null);
           setLive(null);
           setHistory({});
+          setSessionStats({});
+          setConnectedAt(null);
+          liveTimes.current = [];
           setLastLiveAt(null);
           setUpdates(0);
           setInfo(null);
@@ -259,6 +284,13 @@ const App = () => {
     nowTick - lastLiveAt > STALE_AFTER_MS;
   const secondsSinceUpdate =
     lastLiveAt === null ? null : Math.max(0, Math.round((nowTick - lastLiveAt) / 1000));
+  // Real samples per second over the last few seconds; null when not live.
+  const sampleHz =
+    running && live !== null
+      ? liveTimes.current.filter((at) => nowTick - at <= RATE_WINDOW_MS).length / (RATE_WINDOW_MS / 1000)
+      : null;
+  const sessionSeconds =
+    running && connectedAt !== null ? Math.max(0, Math.floor((nowTick - connectedAt) / 1000)) : null;
   const handleStart = async () => {
     setBusy(true);
     try {
@@ -446,6 +478,7 @@ const App = () => {
               Live Python monitor
             </Badge>
           )}
+          <RaceModeToggle />
           <StatusBadge status={status} />
           <Button
             onClick={handleStart}
@@ -475,6 +508,16 @@ const App = () => {
           </Button>
         </div>
       </header>
+
+      {/* session context strip: link, ECU, bus, sample rate, clock, data age */}
+      <StatusBar
+        status={status}
+        info={info}
+        sampleHz={sampleHz}
+        sessionSeconds={sessionSeconds}
+        dataAgeSeconds={running ? secondsSinceUpdate : null}
+        stale={stale}
+      />
 
       {/* error banner */}
       {status?.phase === "error" && (
@@ -538,6 +581,9 @@ const App = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* the numbers that matter, biggest first */}
+      <KeyNumbers channels={KEY_CHANNELS} live={live} stats={sessionStats} stale={stale} />
 
       {/* instrument-cluster tell-tales */}
       <WarningLights codes={codes} live={live} />

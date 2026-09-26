@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
 import "./utils/window.mock";
 import { mockState } from "./utils/window.mock";
-import { render, screen, fireEvent, waitFor } from "./utils";
+import { render, screen, fireEvent, waitFor, within } from "./utils";
 import { cleanup } from "@testing-library/react";
 import { expect, test, describe, beforeEach, vi } from "vitest";
 import { act } from "react";
@@ -530,7 +530,10 @@ describe("Testing the VW diagnostic dashboard", () => {
     // When the channel stops reading it must not keep showing the last
     // number — that would be stale data presented as live. (Battery: the
     // trend chart stays on RPM, so its stats can't mask the assertion.)
-    expect(screen.getByText("14.0")).toBeVisible();
+    // Shown twice by design: the key-numbers strip and the battery gauge.
+    const keyNumbers = screen.getByRole("region", { name: "Key numbers" });
+    expect(screen.getAllByText("14.0")).toHaveLength(2);
+    expect(within(keyNumbers).getByText("14.0")).toBeVisible();
 
     await act(async () => {
       dashboardListener()({
@@ -544,8 +547,11 @@ describe("Testing the VW diagnostic dashboard", () => {
       });
     });
 
-    expect(screen.queryByText("14.0")).toBeNull();
-    expect(screen.getByText("—")).toBeVisible(); // the battery gauge
+    // Gone everywhere: neither the strip nor the gauge keeps the old number.
+    expect(screen.queryAllByText("14.0")).toHaveLength(0);
+    expect(within(keyNumbers).getByText("—")).toBeVisible(); // battery tile
+    // The session peak still says what WAS read — labelled, not as live.
+    expect(within(keyNumbers).getByText("max 14.0")).toBeVisible();
     expect(
       screen.getByRole("img", { name: /battery/i })
     ).toHaveAttribute("title", "No battery reading");
@@ -620,7 +626,8 @@ describe("Testing the VW diagnostic dashboard", () => {
     // Exact match: a fabricated 0 km mileage cell would read exactly
     // "0 km" — "0 km/h" inside the freeze frame must not trip this.
     expect(screen.queryByText("0 km")).toBeNull();
-    expect(screen.getByText("—")).toBeVisible();
+    const dtcRow = screen.getByText("P1234").closest("tr")!;
+    expect(within(dtcRow).getByText("—")).toBeVisible();
     expect(
       screen.getByText("No description available for this code")
     ).toBeVisible();
