@@ -44,7 +44,7 @@ const Gauge = ({
   dangerAt,
   history,
 }: GaugeProps) => {
-  const hasValue = value !== null;
+  const hasValue = value != null && Number.isFinite(value);
   const fraction = hasValue
     ? Math.min(Math.max((value - min) / (max - min), 0), 1)
     : 0;

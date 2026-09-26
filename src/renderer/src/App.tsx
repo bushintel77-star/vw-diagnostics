@@ -139,7 +139,7 @@ const App = () => {
         case "status":
           setStatus(event);
           pushLog(event.message);
-          if (event.phase === "disconnected" || event.phase === "error") {
+          if (["starting", "disconnected", "error"].includes(event.phase)) {
             // Session data ends with the session — a stale "clean" read or
             // frozen gauge must not persist as if it were current state.
             setCodes(null);
@@ -147,6 +147,11 @@ const App = () => {
             setHistory({});
             setLastLiveAt(null);
             setUpdates(0);
+            setInfo(null);
+            setDids(null);
+            setAnalysis(null);
+            setVerification(null);
+            setFlash(null);
           }
           break;
         case "info":
@@ -173,7 +178,7 @@ const App = () => {
               const value = event.values[gauge.key];
               // A null channel is absence of data — it is not appended to
               // the rolling history as if it were a reading.
-              next[gauge.key] = value === null
+              next[gauge.key] = value == null || !Number.isFinite(value)
                 ? samples
                 : [...samples, value].slice(-HISTORY_LENGTH);
             }
@@ -214,6 +219,11 @@ const App = () => {
           setHistory({});
           setLastLiveAt(null);
           setUpdates(0);
+          setInfo(null);
+          setDids(null);
+          setAnalysis(null);
+          setVerification(null);
+          setFlash(null);
           pushLog(`Error: ${event.message}`);
           break;
       }
@@ -235,9 +245,12 @@ const App = () => {
     setBusy(true);
     try {
       const result = await window.context.startDiagnostic();
-      if (!result.started) pushLog(result.message);
+      if (!result.started) {
+        pushLog(result.message);
+        setStatus({ type: "status", phase: "error", mode: "live", message: result.message });
+      }
     } catch (error) {
-      console.error("Failed to start the diagnostic session:", error);
+      setStatus({ type: "status", phase: "error", mode: "live", message: `Cannot start session: ${String(error)}` });
     } finally {
       setBusy(false);
     }
@@ -443,9 +456,8 @@ const App = () => {
             <Cable className="size-5 shrink-0 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
               No interface connected — attach a J2534 pass-thru device,
-              install its vendor driver and the{" "}
-              <code className="rounded bg-muted px-1">pyj2534</code> package,
-              then Start Session to connect to the vehicle.
+              use its existing compatible driver and a matching Python interpreter,
+              then Start Session to connect to the vehicle. The Python wrapper is included.
             </p>
           </CardContent>
         </Card>
@@ -601,7 +613,7 @@ const App = () => {
                 <Gauge
                   key={gauge.key}
                   label={gauge.label}
-                  value={live[gauge.key]}
+                  value={live[gauge.key] ?? null}
                   unit={gauge.unit}
                   min={gauge.min}
                   max={gauge.max}

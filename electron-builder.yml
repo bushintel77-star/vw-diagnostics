@@ -12,6 +12,8 @@ files:
   # Test-only transport fixture (fake VIN/DTCs for CI selftest) — must never
   # ship inside the packaged app.
   - '!resources/sim_fixture.py'
+  - '!tests/**'
+  - '!scripts/**'
 asarUnpack:
   - resources/**
 win:

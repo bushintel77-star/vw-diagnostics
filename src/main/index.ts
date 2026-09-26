@@ -24,9 +24,10 @@ function createWindow(): void {
   mainWindow.on("ready-to-show", () => {
     mainWindow.show();
   });
+  mainWindow.on("closed", () => { void stopDiagnostic(); });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    if (/^https?:\/\//i.test(details.url)) void shell.openExternal(details.url);
     return { action: "deny" };
   });
 
@@ -82,6 +83,14 @@ app.whenReady().then(() => {
   ipcMain.handle("update:check", () => checkForUpdate());
 
   ipcMain.handle("update:openDownload", () => openUpdateDownload());
+});
+
+let quitting = false;
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  quitting = true;
+  void stopDiagnostic().finally(() => app.quit());
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common

@@ -27,7 +27,7 @@ const CONNECTED_STATUS = {
 } as const;
 
 const J2534_MISSING =
-  "pyj2534 is not installed (pip install pyj2534) and/or the vendor J2534 DLL is not registered";
+  "No J2534 PassThru device is registered; check the existing vendor driver";
 
 describe("Testing the VW diagnostic dashboard", () => {
   beforeEach(async () => {
@@ -58,6 +58,29 @@ describe("Testing the VW diagnostic dashboard", () => {
     // Engine RPM labels both the gauge and the trend selector
     expect(screen.getAllByText("Engine RPM").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/No session started yet/i)).toBeVisible();
+  });
+
+  test("a failed start shows the actionable error even without a monitor event", async () => {
+    startMock().mockResolvedValueOnce({ started: false, message: "32-bit DLL needs matching Python" });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /start session/i })); });
+    expect(screen.getAllByText(/32-bit DLL needs matching Python/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/^Error$/)).toBeVisible();
+  });
+
+  test("a new session discards identity, analysis and verification from the previous car", async () => {
+    await act(async () => { dashboardListener()({ type: "status", phase: "starting", mode: "live", message: "Starting new session" }); });
+    expect(screen.queryByText("WV1ZZZ2H0JW123456")).toBeNull();
+    expect(screen.queryByText("Turbo underboost (VNT)")).toBeNull();
+    expect(screen.queryByText(/Backup saved/)).toBeNull();
+  });
+
+  test("a live event with absent candidate channels does not crash gauges", async () => {
+    await act(async () => {
+      dashboardListener()(CONNECTED_STATUS);
+      dashboardListener()({ type: "live", values: { rpm: 800 } as never, timestamp: new Date().toISOString() });
+    });
+    expect(screen.getAllByText("800").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
   test("renders the AI assistant analysis and freeze frame", () => {
@@ -710,8 +733,8 @@ describe("Workflow guide sticky", () => {
 
   test("opens on launch with every workflow stage listed", () => {
     expect(screen.getByText("Workflow guide")).toBeVisible();
-    expect(screen.getByText("1 · Explore in simulation")).toBeVisible();
-    expect(screen.getByText("2 · Install the J2534 driver")).toBeVisible();
+    expect(screen.getByText("1 · Check the connection setup")).toBeVisible();
+    expect(screen.getByText("2 · Keep the compatible J2534 driver")).toBeVisible();
     expect(screen.getByText("5 · Connect to the truck")).toBeVisible();
     expect(screen.getByText("7 · Tuning & flash (gated)")).toBeVisible();
     // stage one is flagged as the starting point
@@ -719,11 +742,11 @@ describe("Workflow guide sticky", () => {
   });
 
   test("expanding a stage shows its how-to and common fixes", () => {
-    fireEvent.click(screen.getByText("2 · Install the J2534 driver"));
-    expect(screen.getByText(/vendor driver setup/i)).toBeVisible();
+    fireEvent.click(screen.getByText("2 · Keep the compatible J2534 driver"));
+    expect(screen.getByText(/driver package confirmed for your adapter/i)).toBeVisible();
     // the no-original-software rule is part of the guide itself
-    expect(screen.getByText(/never install ecuflash/i)).toBeVisible();
-    expect(screen.getByText(/virustotal\.com/i)).toBeVisible();
+    expect(screen.getByText(/avoid newer Tactrix\/EcuFlash/i)).toBeVisible();
+    expect(screen.getByText(/32-bit op20pt32.dll needs 32-bit Python/i)).toBeVisible();
   });
 
   test("hiding the sticky parks a Guide button that reopens it", () => {

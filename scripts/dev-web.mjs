@@ -8,7 +8,8 @@
  */
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
+import { MonitorProcess } from "./monitor-process.mjs";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 const LIVE_PORT = 5175;
@@ -27,8 +28,7 @@ const ALLOWED_ORIGINS = new Set([
   `http://127.0.0.1:${VITE_PORT}`,
 ]);
 
-/** @type {import("node:child_process").ChildProcess | null} */
-let monitor = null;
+const monitor = new MonitorProcess(fileURLToPath(new URL("../resources/j2534_monitor.py", import.meta.url)), broadcastEvent);
 const sseClients = new Set();
 // Late subscribers (page reloads) must still see the session's catalogs and
 // current state, so the last event of each type is replayed on connect.
@@ -39,6 +39,7 @@ function broadcastLine(line) {
   if (!line.trim()) return;
   try {
     const event = JSON.parse(line);
+    if (event.type === "status" && ["starting", "disconnected", "error"].includes(event.phase)) lastByType.clear();
     if (REPLAY_TYPES.has(event.type)) lastByType.set(event.type, line);
   } catch {
     // non-JSON line, just forward
@@ -48,53 +49,6 @@ function broadcastLine(line) {
 
 function broadcastEvent(event) {
   broadcastLine(JSON.stringify(event));
-}
-
-const PYTHON_CANDIDATES =
-  process.platform === "win32"
-    ? [["python", []], ["py", ["-3"]]]
-    : [["python3", []], ["python", []]];
-
-function startMonitor() {
-  if (monitor) return { started: false, message: "A session is already running." };
-  // No mode flag: the monitor only ever attempts a real J2534 connection
-  // and reports the genuine TransportError when none is attached.
-  for (const [command, baseArgs] of PYTHON_CANDIDATES) {
-    let proc;
-    try {
-      proc = spawn(
-        command,
-        [...baseArgs, "resources/j2534_monitor.py"],
-        { stdio: ["pipe", "pipe", "pipe"], windowsHide: true }
-      );
-    } catch {
-      continue;
-    }
-    let won = false;
-    proc.on("error", (error) => {
-      if (error.code === "ENOENT" && !won) monitor = null;
-    });
-    proc.stdout.once("data", () => {
-      won = true;
-    });
-    proc.on("close", (code) => {
-      if (monitor === proc) monitor = null;
-      broadcastEvent({
-        type: "status",
-        phase: "disconnected",
-        message: code === 0 ? "Monitor exited." : `Monitor exited with code ${code}.`,
-        mode: "live",
-      });
-    });
-    const lines = createInterface({ input: proc.stdout });
-    lines.on("line", broadcastLine);
-    proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk) => console.warn("[monitor]", chunk.trimEnd()));
-    proc.stdin?.on("error", () => {});
-    monitor = proc;
-    return { started: true, message: "Monitor started." };
-  }
-  return { started: false, message: "No Python interpreter found." };
 }
 
 function readBody(req) {
@@ -140,7 +94,7 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/status") {
     res.writeHead(200, { ...CORS, "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ running: monitor !== null, token: LIVE_TOKEN }));
+    return res.end(JSON.stringify({ running: monitor.running, token: LIVE_TOKEN }));
   }
 
   if (req.method === "GET" && url.pathname === "/events") {
@@ -165,29 +119,22 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/start") {
     await readBody(req); // consume the request body; there are no options
-    const result = startMonitor();
+    const result = await monitor.start();
     res.writeHead(200, { ...CORS, "Content-Type": "application/json" });
     return res.end(JSON.stringify(result));
   }
 
   if (req.method === "POST" && url.pathname === "/stop") {
-    if (monitor) {
-      monitor.kill();
-      monitor = null;
-    }
+    await monitor.stop();
     res.writeHead(200, { ...CORS, "Content-Type": "application/json" });
     return res.end(JSON.stringify({ started: false, message: "Stopped." }));
   }
 
   if (req.method === "POST" && url.pathname === "/command") {
     const command = await readBody(req);
-    if (!monitor?.stdin?.writable) {
-      res.writeHead(409, { ...CORS, "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ ok: false, message: "No session running." }));
-    }
-    monitor.stdin.write(JSON.stringify(command) + "\n");
-    res.writeHead(200, { ...CORS, "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ ok: true, message: "Command sent." }));
+    const result = await monitor.send(command);
+    res.writeHead(result.ok ? 200 : 409, { ...CORS, "Content-Type": "application/json" });
+    return res.end(JSON.stringify(result));
   }
 
   res.writeHead(404, CORS);
@@ -206,10 +153,13 @@ const vite = spawn(
   { stdio: "inherit", shell: true }
 );
 
-function shutdown() {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   for (const res of sseClients) res.end();
   server.close();
-  if (monitor) monitor.kill();
+  await monitor.stop();
   vite.kill();
   process.exit(0);
 }

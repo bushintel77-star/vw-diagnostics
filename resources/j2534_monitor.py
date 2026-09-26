@@ -906,11 +906,17 @@ class RealTransport:
         # Failed reads come back as None and are propagated as None: a
         # dead channel renders as no-data downstream (gauge em-dash, no
         # history point), never as the last value frozen in place.
-        return self.live_client.read_live(self.did_map)
+        values = self.live_client.read_live(self.did_map)
+        for channel in self.uds.DID_CANDIDATES:
+            values.setdefault(channel, None)
+        return values
+
+    def close(self) -> None:
+        self.client.transport.close()
 
 
 def open_real_transport():
-    """Wire the real pyJ2534 pass-thru device here once an ECU is available."""
+    """Open the explicitly selected or uniquely registered existing DLL."""
     try:
         import uds
     except ImportError as exc:
@@ -925,6 +931,10 @@ def open_real_transport():
         for line in uds.describe_passthru_setup():
             emit(log(f"J2534 preflight: {line}"))
         raise RuntimeError(str(exc)) from exc
+    if hasattr(device, "versions"):
+        versions = device.versions()
+        emit(log(f"Adapter opened: DLL {versions.get('dll', '?')}; "
+                 f"firmware {versions.get('firmware', '?')}; API {versions.get('api', '?')}"))
     client = uds.UdsClient(device)
     # One responsePending is normal; two means the channel is genuinely
     # busy — null it out and keep the display loop moving. Long-running
@@ -951,7 +961,8 @@ def start_command_worker() -> queue.Queue:
                 if not line:
                     continue
                 try:
-                    commands.put(json.loads(line))
+                    command = json.loads(line)
+                    commands.put(command if isinstance(command, dict) else {"cmd": "_malformed"})
                 except json.JSONDecodeError:
                     commands.put({"cmd": "_malformed"})
         finally:
@@ -1190,15 +1201,18 @@ def run(duration: float | None, warmup: int, stream_every: int) -> None:
     emit(status("connecting", "Opening J2534 pass-thru device…", "live"))
     try:
         transport = open_real_transport()
-    except RuntimeError as exc:
+    except Exception as exc:
         emit(status("error", str(exc), "live"))
-        # Block on stdin rather than exiting so the error state persists on
-        # screen. The main process kills us on Stop; stdin EOF (parent
-        # gone) ends the wait cleanly.
-        sys.stdin.read()
+        # Hosts preserve error events after exit; release the process so
+        # Start Session can retry after the user fixes the setup.
         return
     emit(status("connected", f"Connected via {transport.device}", "live"))
-    _run_session(transport, duration, warmup, stream_every)
+    try:
+        _run_session(transport, duration, warmup, stream_every)
+    except Exception as exc:
+        emit(status("error", f"{type(exc).__name__}: {exc}", "live"))
+    finally:
+        transport.close()
 
 
 def _run_session(transport, duration: float | None, warmup: int,
@@ -1533,76 +1547,8 @@ def _selftest_writes(fixture) -> int:
             _uds_mod.UdsClient = saved_client
             _uds_mod.J2534Transport = saved_transport
 
-        # --- J2534 preflight: honest 'why won't it open' diagnostics ---
-        # Registry access and the pyj2534 module are stubbed; no real
-        # hardware or registry is needed.
-        import types as _types
-
-        def _failing_pyj2534(error: str):
-            mod = _types.ModuleType("pyj2534")
-            mod.ISO15765 = 6
-            mod.ISO15765_FRAME_PAD = 0x40
-            mod.FLOW_CONTROL_FILTER = 0x03
-
-            class _Lib:
-                def passThruOpen(self, _name):
-                    raise OSError(error)
-            mod.J2534 = _Lib
-            return mod
-
-        def _open_error() -> str:
-            try:
-                _uds_mod.J2534Transport().open()
-            except _uds_mod.TransportError as exc:
-                return str(exc)
-            return ""
-
-        saved_regs = _uds_mod.passthru_registrations
-        saved_pyj = sys.modules.get("pyj2534")
-        had_pyj = "pyj2534" in sys.modules
-        try:
-            # (b) Nothing registered in either registry view.
-            _uds_mod.passthru_registrations = lambda: []
-            sys.modules["pyj2534"] = _failing_pyj2534("STATUS_ERR_NO_DEVICE")
-            msg = _open_error()
-            checks.append(("preflight: nothing registered says so",
-                           "No J2534 PassThru device is registered" in msg))
-
-            # (c) Registrations only in the OTHER bitness view — the
-            # Openport-clone case: the message must name the bitness fix.
-            other = "32-bit" if _uds_mod.python_bitness() == 64 else "64-bit"
-            _uds_mod.passthru_registrations = lambda: [{
-                "view": other, "name": "Openport 2.0 clone",
-                "dll": r"C:\vendor\op20pt32.dll"}]
-            msg = _open_error()
-            checks.append(("preflight: wrong-bitness DLL names the fix",
-                           other in msg and "VWD_PYTHON" in msg
-                           and "Openport 2.0 clone" in msg))
-
-            # (d) Registered in our view but the open still fails — the
-            # underlying driver error must surface, not be swallowed.
-            ours = f"{_uds_mod.python_bitness()}-bit"
-            _uds_mod.passthru_registrations = lambda: [
-                {"view": ours, "name": "MongoosePro",
-                 "dll": r"C:\vendor\mongoose.dll"}]
-            sys.modules["pyj2534"] = _failing_pyj2534("ERR_DEVICE_NOT_CONNECTED")
-            msg = _open_error()
-            checks.append(("preflight: registered device surfaces driver error",
-                           "ERR_DEVICE_NOT_CONNECTED" in msg
-                           and "MongoosePro" in msg))
-
-            # (a) pyj2534 itself is not importable — None in sys.modules
-            # makes the import raise ImportError.
-            sys.modules["pyj2534"] = None
-            msg = _open_error()
-            checks.append(("preflight: missing pyj2534 names the package",
-                           "pyj2534" in msg and "pip install" in msg))
-        finally:
-            _uds_mod.passthru_registrations = saved_regs
-            if had_pyj:
-                sys.modules["pyj2534"] = saved_pyj
-            else:
-                sys.modules.pop("pyj2534", None)
+        # Preflight and failure-path regressions run in tests/test_transport.py
+        # with the bundled wrapper mocked, never the installed vendor driver.
     finally:
         globals()["emit"] = real_emit
 
@@ -1630,12 +1576,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="VW J2534 diagnostic monitor")
     parser.add_argument("--selftest", action="store_true",
                         help="run the event-stream smoke test on the test fixture")
+    parser.add_argument("--preflight", action="store_true",
+                        help="inspect registry/interpreter/DLL headers without loading the driver")
     parser.add_argument("--duration", type=float, default=None, help="stop after N seconds (testing)")
     parser.add_argument("--warmup-samples", type=int, default=60,
                         help="samples before learned baselines replace static thresholds (testing)")
     parser.add_argument("--stream-every", type=int, default=10,
                         help="emit a streaming analysis every N samples (testing)")
     args = parser.parse_args()
+
+    if args.preflight:
+        import uds
+        result = uds.preflight()
+        print(json.dumps(result), flush=True)
+        return 0 if result["ready"] else 2
 
     if args.selftest:
         return _selftest()

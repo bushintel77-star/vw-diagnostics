@@ -24,10 +24,10 @@ This Electron boilerplate enables developers to quickly build cross-platform app
 
 ```bash
 npm run dev       # the Electron app (real pipeline: main process spawns the Python monitor)
-npm run dev:web   # browser viewer at http://localhost:5174 — no Electron, page-local demo simulation
+npm run dev:web   # browser viewer at http://localhost:5174 — real monitor through the local bridge
 ```
 
-In a plain browser there is no preload bridge, so `src/renderer/src/web/demoBridge.ts` installs an equivalent `window.context` implemented in the page: it mirrors the monitor's event stream, catalogs, and commands (auto-starts a simulated session; the header shows a "Browser demo" badge). The Python monitor remains the source of truth for the real app.
+In a plain browser, `src/renderer/src/web/liveBridge.ts` connects to the local monitor bridge. Start Session attempts a real hardware connection. Without the bridge the page reports not connected; no simulated product mode is available.
 
 ### Option 1 (Recommended): Use `npx electron-react-shadcn` to create a new project.
 
@@ -113,7 +113,7 @@ await window.context.stopDiagnostic();
 unsubscribe();
 ```
 
-To connect hardware: `pip install pyj2534` in a Python whose bitness matches the vendor DLL (a 32-bit `op20pt32.dll` needs a 32-bit interpreter — point `VWD_PYTHON` at it), install the vendor driver, connect the pass-thru device, Start Session. `HARDWARE.md` covers the full setup and first-connect checklist.
+To connect hardware: use the included Python wrapper with a Python whose bitness matches the existing vendor DLL (a 32-bit `op20pt32.dll` needs a 32-bit interpreter — point `VWD_PYTHON` at it), preserve the compatible legacy driver, connect the pass-thru device, Start Session. `HARDWARE.md` covers the full setup and first-connect checklist.
 
 ## Packaging & distribution
 
@@ -183,3 +183,18 @@ The download link uses the `releases/latest/download/vw-diagnostics-setup.exe` p
 ├── tsconfig.node.json              # TypeScript configuration for Node.js
 └── tsconfig.web.json               # TypeScript configuration for web
 ```
+
+## Offline regression checks
+
+```powershell
+python -m unittest discover -s tests -v
+python resources/uds.py --selftest
+python resources/j2534_monitor.py --selftest
+npm test
+npm run build
+```
+
+The driver tests use a fake DLL. `--preflight` only inspects the registry,
+DLL headers and optional hash; it does not load the driver or contact USB.
+See HARDWARE.md for the legacy Openport 1.01.0.4341 setup and driver pinning.
+Hardware compatibility remains unverified until a controlled connection test.
