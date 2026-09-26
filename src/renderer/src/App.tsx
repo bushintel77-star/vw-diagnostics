@@ -26,6 +26,7 @@ import DeletionPanel from "@/components/dashboard/DeletionPanel";
 import ModsPanel, { ScopeCard } from "@/components/dashboard/ModsPanel";
 import UpdateBanner from "@/components/dashboard/UpdateBanner";
 import UpdateGate from "@/components/dashboard/UpdateGate";
+import VersionBadge from "@/components/dashboard/VersionBadge";
 import VerificationCard from "@/components/dashboard/VerificationCard";
 import WarningLights from "@/components/dashboard/WarningLights";
 import WorkflowGuide from "@/components/dashboard/WorkflowGuide";
@@ -419,8 +420,9 @@ const App = () => {
         <div className="flex items-center gap-3">
           <Activity className="size-8 text-chart-1" />
           <div>
-            <h1 className="font-serif text-2xl font-bold tracking-tight">
+            <h1 className="flex flex-wrap items-center gap-2 font-serif text-2xl font-bold tracking-tight">
               VW Diagnostic Dashboard
+              <VersionBadge />
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               J2534 pass-thru monitor spawned from the main process (
