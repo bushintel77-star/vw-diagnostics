@@ -108,6 +108,15 @@ module.exports = {
           "0%": { opacity: "0", transform: "translateY(6px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        // Neon: a gradient border that flows, and a breathing glow.
+        "border-flow": {
+          "0%": { backgroundPosition: "0% 50%" },
+          "100%": { backgroundPosition: "300% 50%" },
+        },
+        "neon-pulse": {
+          "0%, 100%": { opacity: "0.55", filter: "brightness(1)" },
+          "50%": { opacity: "1", filter: "brightness(1.35)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -119,6 +128,8 @@ module.exports = {
         sweep: "sweep 1.4s ease-in-out infinite",
         "cell-pop": "cell-pop 0.4s ease-out both",
         "fade-up": "fade-up 0.45s ease-out both",
+        "border-flow": "border-flow 4s linear infinite",
+        "neon-pulse": "neon-pulse 1.6s ease-in-out infinite",
       },
     },
   },

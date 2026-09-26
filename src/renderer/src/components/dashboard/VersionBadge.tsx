@@ -27,7 +27,8 @@ const VersionBadge = () => {
 
   if (!result || !/^\d/.test(result.currentVersion)) return null;
   const version = `v${result.currentVersion}`;
-  const base = "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium";
+  const base =
+    "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 [font-family:'Inter_Variable',Inter,sans-serif] text-[11px] font-medium tracking-normal";
 
   if (result.status === "available" || result.status === "blocked") {
     return (

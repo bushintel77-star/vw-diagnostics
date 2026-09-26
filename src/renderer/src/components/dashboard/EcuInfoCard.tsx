@@ -47,7 +47,9 @@ const DidMap = ({ entries }: { entries: DidMapEntry[] }) => (
             key={`cell-${entry.channel}-${entry.did}`}
             className={cn(
               "size-3 rounded-[3px] animate-cell-pop motion-reduce:animate-none",
-              entry.ok ? "bg-chart-2" : "border border-border bg-muted"
+              entry.ok
+                ? "bg-chart-2 shadow-[0_0_8px_1px_hsl(var(--chart-2)/0.85)]"
+                : "border border-border bg-muted"
             )}
             style={{ animationDelay: `${index * STAGGER_MS}ms` }}
           />
@@ -103,9 +105,10 @@ const MemoryMap = ({ pct }: { pct: number }) => {
           className={cn(
             "h-2 rounded-[2px] transition-colors duration-300",
             index < filled
-              ? "bg-chart-1"
+              ? "bg-chart-1 shadow-[0_0_6px_hsl(var(--chart-1)/0.7)]"
               : index === filled
-                ? "animate-pulse bg-chart-1/40 motion-reduce:animate-none"
+                ? // the block being read right now: bright, breathing neon
+                  "animate-neon-pulse bg-chart-1 shadow-[0_0_12px_3px_hsl(var(--chart-1))] motion-reduce:animate-none"
                 : "bg-muted"
           )}
         />

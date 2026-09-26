@@ -46,10 +46,12 @@ export default function ConnectionProgress(signals: ConnectionSignals): React.JS
   }, []);
 
   return (
-    <Card className="overflow-hidden animate-fade-up motion-reduce:animate-none">
+    // Neon frame: a 1px gradient border that flows while connecting.
+    <div className="rounded-xl bg-[linear-gradient(90deg,hsl(var(--chart-1)),hsl(var(--chart-2)),hsl(var(--chart-4)),hsl(var(--chart-1)))] bg-[length:300%_100%] p-px shadow-[0_0_24px_-6px_hsl(var(--chart-1)/0.6)] animate-border-flow motion-reduce:animate-none">
+    <Card className="overflow-hidden rounded-[11px] border-0">
       {/* indeterminate sweep: something is happening, without a fake % */}
       <div className="relative h-1 overflow-hidden bg-muted">
-        <div className="absolute inset-y-0 w-1/4 animate-sweep rounded-full bg-gradient-to-r from-transparent via-chart-1 to-transparent motion-reduce:animate-none" />
+        <div className="absolute inset-y-0 w-1/4 animate-sweep rounded-full bg-gradient-to-r from-transparent via-chart-1 to-transparent shadow-[0_0_12px_2px_hsl(var(--chart-1)/0.8)] motion-reduce:animate-none" />
       </div>
       <CardContent className="flex flex-wrap items-start gap-x-8 gap-y-3 p-4">
         <div className="min-w-44">
@@ -74,8 +76,9 @@ export default function ConnectionProgress(signals: ConnectionSignals): React.JS
                 <span
                   className={cn(
                     "grid size-4 shrink-0 place-items-center rounded-full",
-                    done && "bg-chart-2 text-background animate-cell-pop motion-reduce:animate-none",
-                    active && "text-chart-1",
+                    done &&
+                      "bg-chart-2 text-background shadow-[0_0_8px_hsl(var(--chart-2)/0.9)] animate-cell-pop motion-reduce:animate-none",
+                    active && "text-chart-1 drop-shadow-[0_0_6px_hsl(var(--chart-1))]",
                     !done && !active && "border border-border"
                   )}
                 >
@@ -93,5 +96,6 @@ export default function ConnectionProgress(signals: ConnectionSignals): React.JS
         </ol>
       </CardContent>
     </Card>
+    </div>
   );
 }
