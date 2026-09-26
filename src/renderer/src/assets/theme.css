@@ -11,10 +11,14 @@
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
+    /* 40% (not shadcn's 46.1%) keeps secondary text at 4.5:1 or better on
+       tinted and muted surfaces too, not just on white. */
+    --muted-foreground: 240 3.8% 40%;
     --accent: 240 4.8% 95.9%;
     --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
+    /* Darker than shadcn's 60.2% so red text and white-on-red badges reach
+       4.5:1 at small sizes. */
+    --destructive: 0 72% 42%;
     --destructive-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
@@ -42,8 +46,10 @@
     --muted-foreground: 240 5% 64.9%;
     --accent: 240 3.7% 15.9%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
+    /* Bright red reads on the dark background (red text, alarms); badges
+       and buttons on it use near-black text for 4.5:1. */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 240 10% 4%;
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;

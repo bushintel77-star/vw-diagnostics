@@ -509,6 +509,9 @@ const App = () => {
         </div>
       </header>
 
+      {/* one main landmark: screen-reader users can jump straight here */}
+      <main className="flex flex-col gap-6">
+
       {/* session context strip: link, ECU, bus, sample rate, clock, data age */}
       <StatusBar
         status={status}
@@ -695,7 +698,8 @@ const App = () => {
             intermittent faults show up in the history, not the instant value
           </CardDescription>
         </CardHeader>
-        <CardContent className={stale ? "opacity-40 grayscale transition-all" : "transition-all"}>
+        {/* stale: greyed but readable; the stale banner above says why */}
+        <CardContent className={stale ? "grayscale transition-all" : "transition-all"}>
           {live === null ? (
             running ? (
               <div className="grid grid-cols-3 gap-6 sm:grid-cols-5">
@@ -785,6 +789,7 @@ const App = () => {
           )}
         </CardContent>
       </Card>
+      </main>
     </div>
   );
 };

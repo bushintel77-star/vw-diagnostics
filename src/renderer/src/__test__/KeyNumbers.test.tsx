@@ -24,8 +24,13 @@ describe("key numbers", () => {
   test("colour marks real limits only, with the number itself", () => {
     const { rerender } = render(<KeyNumbers channels={[COOLANT]} live={live({ coolantTempC: 90 })} stats={{}} stale={false} />);
     expect(screen.getByText("90")).not.toHaveClass("text-destructive");
+    expect(screen.queryByText("High")).toBeNull();
+    rerender(<KeyNumbers channels={[COOLANT]} live={live({ coolantTempC: 108 })} stats={{}} stale={false} />);
+    expect(screen.getByText("High")).toBeVisible();
     rerender(<KeyNumbers channels={[COOLANT]} live={live({ coolantTempC: 118 })} stats={{}} stale={false} />);
     expect(screen.getByText("118")).toHaveClass("text-destructive");
+    // Never colour alone: the limit is also stated in words.
+    expect(screen.getByText("Limit")).toBeVisible();
   });
 
   test("no reading shows a dash, never a number", () => {
@@ -47,7 +52,7 @@ describe("status bar", () => {
         stale={false}
       />
     );
-    const bar = screen.getByRole("status", { name: "Session status" });
+    const bar = screen.getByRole("group", { name: "Session status" });
     expect(bar).toHaveTextContent("LIVE");
     expect(bar).toHaveTextContent("2.0 Hz");
     expect(bar).toHaveTextContent("01:02:05");
@@ -64,6 +69,6 @@ describe("status bar", () => {
         stale
       />
     );
-    expect(screen.getByRole("status", { name: "Session status" })).toHaveTextContent("STALE");
+    expect(screen.getByRole("group", { name: "Session status" })).toHaveTextContent("STALE");
   });
 });

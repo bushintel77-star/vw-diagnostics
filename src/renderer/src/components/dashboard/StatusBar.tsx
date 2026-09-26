@@ -52,8 +52,10 @@ export default function StatusBar({
           : { text: "OFFLINE", dot: "bg-muted-foreground/50" };
 
   return (
+    // A labelled group, not role="status": a live region here would make
+    // screen readers announce the session clock every second.
     <div
-      role="status"
+      role="group"
       aria-label="Session status"
       className="flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xl border bg-card/70 px-4 py-2 backdrop-blur"
     >

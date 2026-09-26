@@ -38,10 +38,9 @@ export default function KeyNumbers({
   return (
     <section
       aria-label="Key numbers"
-      className={cn(
-        "grid grid-cols-3 gap-2 transition-opacity lg:grid-cols-6",
-        stale && "opacity-40 grayscale"
-      )}
+      // Stale = frozen, not current: grey + dashed + labelled, but still
+      // readable (fading the text out would fail contrast).
+      className={cn("grid grid-cols-3 gap-2 lg:grid-cols-6", stale && "grayscale")}
     >
       {channels.map((channel) => {
         const raw = live?.[channel.key];
@@ -64,14 +63,31 @@ export default function KeyNumbers({
               "rounded-xl border bg-card px-3 pb-2.5 pt-2 transition-colors duration-300",
               level === "danger" && "border-destructive/70 shadow-[0_0_14px_-4px_hsl(var(--destructive))]",
               level === "warn" && "border-chart-4/70",
-              level === "none" && "border-border/60"
+              level === "none" && "border-border/60",
+              stale && "border-dashed"
             )}
           >
             <div className="flex items-baseline justify-between gap-2">
               <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {channel.label}
               </span>
-              <span className="text-[10px] text-muted-foreground">{channel.unit}</span>
+              {/* Limits are stated in words too, never by colour alone (WCAG 1.4.1). */}
+              {stale ? (
+                <span className="rounded border border-border px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Stale
+                </span>
+              ) : level === "danger" || level === "warn" ? (
+                <span
+                  className={cn(
+                    "rounded px-1 text-[10px] font-bold uppercase tracking-wider",
+                    level === "danger" ? "bg-destructive text-destructive-foreground" : "bg-chart-4 text-background"
+                  )}
+                >
+                  {level === "danger" ? "Limit" : "High"}
+                </span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground">{channel.unit}</span>
+              )}
             </div>
             <div
               className={cn(

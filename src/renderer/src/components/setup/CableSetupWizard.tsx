@@ -109,7 +109,8 @@ export default function CableSetupWizard({
         <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-chart-1/70 to-transparent" />
         <div aria-hidden className="pointer-events-none absolute -top-28 left-1/2 h-56 w-[28rem] -translate-x-1/2 rounded-full bg-chart-1/15 blur-3xl" />
 
-        <header className="relative flex items-start gap-3 px-6 pb-4 pt-6">
+        {/* a div, not <header>: inside a dialog it would be a second page banner */}
+        <div className="relative flex items-start gap-3 px-6 pb-4 pt-6">
           <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-chart-1/15 text-chart-1">
             <Cable className="size-5" />
           </div>
@@ -124,7 +125,7 @@ export default function CableSetupWizard({
           <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full" aria-label="Close cable setup" onClick={closeWizard}>
             <X className="size-4" />
           </Button>
-        </header>
+        </div>
 
         <div className="relative space-y-5 overflow-y-auto px-6 pb-2">
           <Stepper states={stepStates(status)} />

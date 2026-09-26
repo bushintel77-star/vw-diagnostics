@@ -30,8 +30,10 @@ export default function RaceModeToggle(): React.JSX.Element {
       variant="outline"
       size="icon"
       className="size-9 rounded-full"
+      // Toggle pattern: a fixed name plus aria-pressed. Changing the name as
+      // well would announce contradictory states.
       aria-pressed={race}
-      aria-label={race ? "Race mode on (dark). Switch to light" : "Race mode off (light). Switch to dark"}
+      aria-label="Race mode (dark theme)"
       title={race ? "Race mode (dark)" : "Light mode"}
       onClick={() => setRace((on) => !on)}
     >
