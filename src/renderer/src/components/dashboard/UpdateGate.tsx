@@ -38,7 +38,7 @@ const UpdateGate = () => {
         <CardContent className="space-y-4 p-6">
           <div className="flex items-center gap-3">
             <AlertTriangle className="size-6 shrink-0 text-destructive" />
-            <h2 className="font-serif text-xl font-bold">
+            <h2 className="text-xl font-bold">
               Update required before continuing
             </h2>
           </div>

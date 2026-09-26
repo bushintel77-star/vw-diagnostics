@@ -78,7 +78,7 @@ const DeletionPanel = ({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <p className="rounded-md border border-chart-4/40 bg-chart-4/10 px-3 py-2 text-xs leading-snug text-muted-foreground">
+        <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-snug text-muted-foreground">
           Deletions are applied by bench flashing the ECU (boot mode) — this
           app plans the change and verifies it afterwards; it does not write
           to the ECU. Delete/restore controls are disabled.
@@ -130,7 +130,7 @@ const DeletionPanel = ({
                         {item.description}
                       </p>
                       {item.requirement && (
-                        <p className="flex items-start gap-1.5 rounded-md border border-chart-4/40 bg-chart-4/10 px-2 py-1.5 text-[11px] leading-snug text-chart-4">
+                        <p className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] leading-snug text-warning">
                           <TriangleAlert className="mt-0.5 size-3 shrink-0" />
                           {item.requirement}
                         </p>

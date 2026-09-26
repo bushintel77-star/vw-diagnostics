@@ -452,18 +452,14 @@ const App = () => {
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Activity className="size-8 text-chart-1" />
+          <Activity className="size-8 text-signal" />
           <div>
-            <h1 className="flex flex-wrap items-center gap-2 font-serif text-2xl font-bold tracking-tight">
+            <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold tracking-tight">
               VW Diagnostic Dashboard
               <VersionBadge />
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              J2534 pass-thru monitor spawned from the main process (
-              <code className="rounded bg-muted px-1">
-                resources/j2534_monitor.py
-              </code>
-              )
+              VW 3.0 V6 TDI · J2534 pass-thru diagnostics
             </p>
           </div>
         </div>
@@ -480,7 +476,10 @@ const App = () => {
           )}
           <RaceModeToggle />
           <StatusBadge status={status} />
+          {/* the primary action: the biggest target on the screen */}
           <Button
+            size="lg"
+            className="px-6 text-base"
             onClick={handleStart}
             disabled={running || busy || driverTooNew}
             title={driverTooNew ? "Blocked: a newer Tactrix driver could brick the cable. Open Cable setup." : undefined}
@@ -554,9 +553,8 @@ const App = () => {
               </p>
             ) : (
               <p className="flex-1 text-sm text-muted-foreground">
-                No interface connected — attach a J2534 pass-thru device,
-                use its existing compatible driver and a matching Python interpreter,
-                then Start Session to connect to the vehicle. The Python wrapper is included.
+                No interface connected — plug the cable into this computer,
+                or use Set up cable to check the driver and Python for you.
               </p>
             )}
             {cableSetup.status?.platformSupported && cableSetup.status.cable !== "ready" && (
@@ -570,9 +568,9 @@ const App = () => {
 
       {/* stale-data watchdog */}
       {stale && (
-        <Card className="border-chart-4/50">
+        <Card className="border-warning/50">
           <CardContent className="flex items-center gap-3 p-4">
-            <AlertTriangle className="size-5 shrink-0 text-chart-4" />
+            <AlertTriangle className="size-5 shrink-0 text-warning" />
             <p className="text-sm">
               Data stale — last live update{" "}
               <span className="font-semibold tabular-nums">

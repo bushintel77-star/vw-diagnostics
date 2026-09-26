@@ -105,10 +105,10 @@ const MemoryMap = ({ pct }: { pct: number }) => {
           className={cn(
             "h-2 rounded-[2px] transition-colors duration-300",
             index < filled
-              ? "bg-chart-1 shadow-[0_0_6px_hsl(var(--chart-1)/0.7)]"
+              ? "bg-signal shadow-[0_0_6px_hsl(var(--signal)/0.7)]"
               : index === filled
                 ? // the block being read right now: bright, breathing neon
-                  "animate-neon-pulse bg-chart-1 shadow-[0_0_12px_3px_hsl(var(--chart-1))] motion-reduce:animate-none"
+                  "animate-neon-pulse bg-signal shadow-[0_0_12px_3px_hsl(var(--signal))] motion-reduce:animate-none"
                 : "bg-muted"
           )}
         />
@@ -160,7 +160,7 @@ const BackupControl = ({
       {busy && pct === null && (
         // Read requested, no byte count yet: honest indeterminate sweep.
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted">
-          <div className="absolute inset-y-0 w-1/4 animate-sweep rounded-full bg-gradient-to-r from-transparent via-chart-1 to-transparent motion-reduce:animate-none" />
+          <div className="absolute inset-y-0 w-1/4 animate-sweep rounded-full bg-gradient-to-r from-transparent via-signal to-transparent motion-reduce:animate-none" />
         </div>
       )}
       {pct !== null && <MemoryMap pct={pct} />}

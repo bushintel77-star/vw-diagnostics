@@ -54,8 +54,8 @@ const Gauge = ({
       : dangerAt !== undefined && value >= dangerAt
         ? "stroke-destructive"
         : warnAt !== undefined && value >= warnAt
-          ? "stroke-chart-4"
-          : "stroke-chart-1";
+          ? "stroke-warning"
+          : "stroke-signal";
   const display = hasValue
     ? value.toLocaleString(undefined, {
         minimumFractionDigits: decimals,

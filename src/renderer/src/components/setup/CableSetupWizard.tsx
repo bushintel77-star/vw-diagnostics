@@ -106,16 +106,16 @@ export default function CableSetupWizard({
         className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-border/60 bg-card/85 shadow-[0_24px_80px_-24px_rgba(0,0,0,0.45)] outline-none backdrop-blur-2xl animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-300 motion-reduce:animate-none"
       >
         {/* ambient accent: hairline + soft glow */}
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-chart-1/70 to-transparent" />
-        <div aria-hidden className="pointer-events-none absolute -top-28 left-1/2 h-56 w-[28rem] -translate-x-1/2 rounded-full bg-chart-1/15 blur-3xl" />
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-signal/70 to-transparent" />
+        <div aria-hidden className="pointer-events-none absolute -top-28 left-1/2 h-56 w-[28rem] -translate-x-1/2 rounded-full bg-signal/15 blur-3xl" />
 
         {/* a div, not <header>: inside a dialog it would be a second page banner */}
         <div className="relative flex items-start gap-3 px-6 pb-4 pt-6">
-          <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-chart-1/15 text-chart-1">
+          <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-signal/15 text-signal">
             <Cable className="size-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="cable-setup-title" className="font-serif text-xl font-bold tracking-tight">
+            <h2 id="cable-setup-title" className="text-xl font-bold tracking-tight">
               Cable setup
             </h2>
             <p id="cable-setup-desc" className="text-sm text-muted-foreground">
@@ -246,7 +246,7 @@ function Stepper({ states }: { states: Record<string, StepState> }): React.JSX.E
 
 const CHECK_ICON: Record<CheckState, ReactNode> = {
   pass: <CheckCircle2 className="size-4 text-chart-2" />,
-  warn: <AlertTriangle className="size-4 text-chart-4" />,
+  warn: <AlertTriangle className="size-4 text-warning" />,
   fail: <XCircle className="size-4 text-destructive" />,
   waiting: <CircleDashed className="size-4 animate-spin-slow text-muted-foreground motion-reduce:animate-none" />,
   pending: <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />,
@@ -270,7 +270,7 @@ function ChecksGrid({ checks }: { checks: CheckItem[] }): React.JSX.Element {
           key={check.id}
           className={cn(
             "flex items-start gap-2.5 rounded-2xl border bg-background/40 p-3 transition-colors duration-300",
-            check.state === "fail" ? "border-destructive/40" : check.state === "warn" ? "border-chart-4/40" : "border-border/60"
+            check.state === "fail" ? "border-destructive/40" : check.state === "warn" ? "border-warning/40" : "border-border/60"
           )}
         >
           <span className="mt-0.5 shrink-0">{CHECK_ICON[check.state]}</span>
@@ -301,7 +301,7 @@ function LiveLine({ children }: { children: ReactNode }): React.JSX.Element {
 function PanelTitle({ icon, children }: { icon: ReactNode; children: ReactNode }): React.JSX.Element {
   return (
     <h3 className="mb-2 flex items-center gap-2 text-base font-semibold">
-      <span className="text-chart-1">{icon}</span>
+      <span className="text-signal">{icon}</span>
       {children}
     </h3>
   );
@@ -324,8 +324,8 @@ function Steps({ items }: { items: ReactNode[] }): React.JSX.Element {
 
 function Caution({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <p className="flex gap-2 rounded-xl border border-chart-4/40 bg-chart-4/10 p-3 text-xs leading-relaxed">
-      <Ban className="mt-px size-4 shrink-0 text-chart-4" />
+    <p className="flex gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs leading-relaxed">
+      <Ban className="mt-px size-4 shrink-0 text-warning" />
       <span>{children}</span>
     </p>
   );
@@ -507,8 +507,8 @@ function BundledDriver({
       <PanelTitle icon={<KeyRound className="size-5" />}>Install the cable driver</PanelTitle>
       {intro}
       {notice && (
-        <p role="alert" className="mb-3 flex gap-2 rounded-xl border border-chart-4/40 bg-chart-4/10 p-3 text-sm">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-chart-4" />
+        <p role="alert" className="mb-3 flex gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
           {notice}
         </p>
       )}
@@ -623,7 +623,7 @@ function PasskeyForm({
         Unlocks the OpenPort driver that comes locked inside this app (version 1.01.4341). Windows asks for permission next.
       </p>
       {capsLock && (
-        <p id="passkey-caps" className="text-xs text-chart-4">
+        <p id="passkey-caps" className="text-xs text-warning">
           Caps Lock is on.
         </p>
       )}

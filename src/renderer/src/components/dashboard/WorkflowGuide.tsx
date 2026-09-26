@@ -200,8 +200,8 @@ export default function WorkflowGuide(): React.JSX.Element {
           onPointerUp={onPointerUp}
         >
           <GripVertical className="size-3.5 text-muted-foreground" />
-          <Activity className="size-4 text-chart-1" />
-          <span className="font-serif text-sm font-bold">Workflow guide</span>
+          <Activity className="size-4 text-signal" />
+          <span className="text-sm font-bold">Workflow guide</span>
           <Badge variant="outline" className="ml-1 text-[10px] text-muted-foreground">
             sticky
           </Badge>
@@ -243,7 +243,7 @@ export default function WorkflowGuide(): React.JSX.Element {
                   />
                   <span className="text-xs font-medium">{stage.title}</span>
                   {stage.status === "now" && (
-                    <Badge className="ml-auto border-chart-1/50 bg-chart-1/10 text-[9px] text-chart-1" variant="outline">
+                    <Badge className="ml-auto border-signal/50 bg-signal/10 text-[9px] text-signal" variant="outline">
                       start here
                     </Badge>
                   )}

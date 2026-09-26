@@ -18,7 +18,7 @@ const clock = (seconds: number): string => {
 function Item({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
   return (
     <div className="flex items-baseline gap-1.5 whitespace-nowrap">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</span>
       <span className="font-mono text-xs tabular-nums">{children}</span>
     </div>
   );
@@ -43,10 +43,10 @@ export default function StatusBar({
   const link =
     phase === "connected"
       ? stale
-        ? { text: "STALE", dot: "bg-chart-4" }
+        ? { text: "STALE", dot: "bg-warning" }
         : { text: "LIVE", dot: "bg-chart-2 shadow-[0_0_8px_hsl(var(--chart-2))]" }
       : phase === "starting" || phase === "connecting"
-        ? { text: "LINKING", dot: "bg-chart-1 animate-pulse motion-reduce:animate-none" }
+        ? { text: "LINKING", dot: "bg-signal animate-pulse motion-reduce:animate-none" }
         : phase === "error"
           ? { text: "ERROR", dot: "bg-destructive" }
           : { text: "OFFLINE", dot: "bg-muted-foreground/50" };

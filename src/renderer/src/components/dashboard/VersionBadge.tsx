@@ -28,17 +28,17 @@ const VersionBadge = () => {
   if (!result || !/^\d/.test(result.currentVersion)) return null;
   const version = `v${result.currentVersion}`;
   const base =
-    "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 [font-family:'Inter_Variable',Inter,sans-serif] text-[11px] font-medium tracking-normal";
+    "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium tracking-normal";
 
   if (result.status === "available" || result.status === "blocked") {
     return (
       <button
         type="button"
         onClick={() => void window.context.openUpdateDownload?.()}
-        className={cn(base, "border-chart-4/50 bg-chart-4/10 hover:bg-chart-4/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
+        className={cn(base, "border-warning/50 bg-warning/10 hover:bg-warning/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
         title="Download the new version"
       >
-        <span className="size-1.5 rounded-full bg-chart-4" />
+        <span className="size-1.5 rounded-full bg-warning" />
         {version} · Update available
       </button>
     );

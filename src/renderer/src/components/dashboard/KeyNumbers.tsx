@@ -40,9 +40,12 @@ export default function KeyNumbers({
       aria-label="Key numbers"
       // Stale = frozen, not current: grey + dashed + labelled, but still
       // readable (fading the text out would fail contrast).
-      className={cn("grid grid-cols-3 gap-2 lg:grid-cols-6", stale && "grayscale")}
+      // The first channel is the one hero figure; the rest share a row. At the
+      // app's default width (md) the hero gets its own row above five tiles.
+      className={cn("grid grid-cols-2 gap-2 md:grid-cols-5 lg:grid-cols-7", stale && "grayscale")}
     >
-      {channels.map((channel) => {
+      {channels.map((channel, index) => {
+        const hero = index === 0;
         const raw = live?.[channel.key];
         const value = raw != null && Number.isFinite(raw) ? raw : null;
         const level =
@@ -61,55 +64,65 @@ export default function KeyNumbers({
             key={channel.key}
             className={cn(
               "rounded-xl border bg-card px-3 pb-2.5 pt-2 transition-colors duration-300",
+              hero && "col-span-2 px-4 md:col-span-5 lg:col-span-2",
               level === "danger" && "border-destructive/70 shadow-[0_0_14px_-4px_hsl(var(--destructive))]",
-              level === "warn" && "border-chart-4/70",
+              level === "warn" && "border-warning/70",
               level === "none" && "border-border/60",
               stale && "border-dashed"
             )}
           >
             <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {channel.label}
               </span>
               {/* Limits are stated in words too, never by colour alone (WCAG 1.4.1). */}
               {stale ? (
-                <span className="rounded border border-border px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                <span className="rounded border border-border px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                   Stale
                 </span>
               ) : level === "danger" || level === "warn" ? (
                 <span
                   className={cn(
-                    "rounded px-1 text-[10px] font-bold uppercase tracking-wider",
-                    level === "danger" ? "bg-destructive text-destructive-foreground" : "bg-chart-4 text-background"
+                    "rounded px-1 text-[11px] font-bold uppercase tracking-wider",
+                    level === "danger" ? "bg-destructive text-destructive-foreground" : "bg-warning text-warning-foreground"
                   )}
                 >
                   {level === "danger" ? "Limit" : "High"}
                 </span>
               ) : (
-                <span className="text-[10px] text-muted-foreground">{channel.unit}</span>
+                <span className="text-[11px] text-muted-foreground">{channel.unit}</span>
               )}
             </div>
+            {/* Live numbers keep tabular digits so they don't jitter as they change. */}
             <div
               className={cn(
-                "mt-0.5 text-3xl font-bold leading-none tabular-nums tracking-tight",
-                value === null && "text-muted-foreground/50",
-                level === "warn" && "text-chart-4",
+                "mt-1 font-bold leading-none tabular-nums tracking-tight",
+                hero ? "text-5xl" : "text-3xl",
+                value === null && "text-muted-foreground",
+                level === "warn" && "text-warning",
                 level === "danger" && "text-destructive"
               )}
             >
               {value === null ? "—" : fmt(value, channel.decimals)}
             </div>
-            {/* position within the channel's range */}
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+            {/* Meter: the fill carries severity; the track is a light step of
+                the same colour, so the state reads across the whole bar. */}
+            <div
+              className={cn(
+                "mt-2 overflow-hidden rounded-full",
+                hero ? "h-1.5" : "h-1",
+                level === "danger" ? "bg-destructive/20" : level === "warn" ? "bg-warning/20" : level === "ok" ? "bg-signal/15" : "bg-muted"
+              )}
+            >
               <div
                 className={cn(
                   "h-full rounded-full transition-[width] duration-300",
-                  level === "danger" ? "bg-destructive" : level === "warn" ? "bg-chart-4" : "bg-chart-1"
+                  level === "danger" ? "bg-destructive" : level === "warn" ? "bg-warning" : "bg-signal"
                 )}
                 style={{ width: `${fraction * 100}%` }}
               />
             </div>
-            <div className="mt-1 flex justify-between text-[10px] tabular-nums text-muted-foreground">
+            <div className="mt-1 flex justify-between text-[11px] tabular-nums text-muted-foreground">
               <span title="Session minimum">min {range ? fmt(range.min, channel.decimals) : "—"}</span>
               <span title="Session peak">max {range ? fmt(range.max, channel.decimals) : "—"}</span>
             </div>

@@ -673,7 +673,7 @@ describe("No J2534 interface attached", () => {
   test("explains no interface is connected and what is needed", () => {
     expect(screen.getByText(/No interface connected/i)).toBeVisible();
     expect(
-      screen.getByText(/attach a J2534 pass-thru device/i)
+      screen.getByText(/plug the cable into this computer/i)
     ).toBeVisible();
     expect(screen.getByText(/No session started yet/i)).toBeVisible();
     expect(screen.getAllByText("Not connected").length).toBeGreaterThanOrEqual(1);
