@@ -760,16 +760,19 @@ class RealTransport:
 
     Implements the transport interface (mode/device/read_info/read_dtcs/
     clear_dtcs/sample) so the monitor loop is transport-agnostic.
-    Read services are wired; calibration writing is deliberately absent —
-    this app plans and verifies changes, it does not write them.
+    Read services are wired; the write path is gated while its three
+    missing pieces are outstanding (seed/key algorithm, DDXC flash
+    layout, checksum correction) — refusing is honest wiring, not a
+    decision to never write.
     """
 
     mode = "live"
     device = "J2534 pass-thru (ISO15765, 500 kbps)"
 
-    # This app never writes calibration — that is a settled product position,
-    # not a missing feature. Changes are made by bench flashing the ECU
-    # (boot mode); this app plans them beforehand and verifies afterwards.
+    # Write gate: refuse rather than fake success while the write path is
+    # incomplete. This is a state, not a product decision — writing
+    # calibration is the app's design target once the key algorithm,
+    # flash layout and checksum correction are in.
     can_write_calibration = False
     calibration_write_note = (
         "calibration changes are applied by bench flashing the ECU (boot "
